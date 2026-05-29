@@ -59,17 +59,32 @@ def clean_title(title):
     return title
 def get_thumbnail(url):
     try:
+        # Follow redirect ke URL artikel asli
         resp = requests.get(url, timeout=5, headers={
             "User-Agent": "Mozilla/5.0"
-        })
-        # Cari og:image di HTML
+        }, allow_redirects=True)
+        
+        final_url = resp.url  # URL setelah redirect
+        print(f"Final URL: {final_url}")
+        
+        # Kalau masih di domain google, skip
+        if "google.com" in final_url:
+            return None
+            
+        # Cari og:image
         match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', resp.text)
         if not match:
             match = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', resp.text)
         if match:
-            return match.group(1)
-    except:
-        pass
+            img_url = match.group(1)
+            # Kalau URL relatif, jadiin absolut
+            if img_url.startswith("/"):
+                from urllib.parse import urlparse
+                base = f"{urlparse(final_url).scheme}://{urlparse(final_url).netloc}"
+                img_url = base + img_url
+            return img_url
+    except Exception as e:
+        print(f"Thumbnail error: {e}")
     return None
 
 def fetch_articles():
