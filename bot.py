@@ -158,8 +158,7 @@ def is_relevant(title, summary):
     prompt = f"""
 Kamu kurator channel ekonomi Indonesia. Tentukan apakah berita ini cukup penting dan relevan untuk dipost ke channel.
 
-Judul: {title}
-Ringkasan: {summary}
+Konteks berita: {summary}
 
 Kriteria LAYAK:
 - Berdampak langsung ke ekonomi Indonesia atau masyarakat umum
