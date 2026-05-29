@@ -1,0 +1,33 @@
+name: IDR Watch News Bot
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 07.00 WIB
+    - cron: '0 5 * * *'   # 12.00 WIB
+    - cron: '0 10 * * *'  # 17.00 WIB
+    - cron: '0 13 * * *'  # 20.00 WIB
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  post-news:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - run: pip install feedparser google-generativeai requests pytz
+      - run: python bot.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      - name: Save posted URLs
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add posted.json
+          git commit -m "update posted urls" || echo "no changes"
+          git push
