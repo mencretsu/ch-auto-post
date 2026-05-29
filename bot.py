@@ -44,7 +44,6 @@ GEMINI_KEYS = [
     os.environ["GEMINI_API_KEY_2"],
     os.environ["GEMINI_API_KEY_3"],
 ]
-client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 def load_posted():
