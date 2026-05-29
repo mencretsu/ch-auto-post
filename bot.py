@@ -22,16 +22,19 @@ import os
 import json
 import time
 import re
+import io
 import feedparser
 import requests
 from datetime import datetime
+from urllib.parse import urlparse
 import pytz
+from PIL import Image, ImageDraw, ImageFont
 from google import genai
-from urllib.parse import urljoin
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+PEXELS_API_KEY = os.environ["PEXELS_API_KEY"]
 
 POSTED_FILE = "posted.json"
 WIB = pytz.timezone("Asia/Jakarta")
@@ -57,35 +60,7 @@ def save_posted(data):
 def clean_title(title):
     title = re.sub(r'\s[-|]\s.*$', '', title).strip()
     return title
-def get_thumbnail(url):
-    try:
-        # Follow redirect ke URL artikel asli
-        resp = requests.get(url, timeout=5, headers={
-            "User-Agent": "Mozilla/5.0"
-        }, allow_redirects=True)
-        
-        final_url = resp.url  # URL setelah redirect
-        print(f"Final URL: {final_url}")
-        
-        # Kalau masih di domain google, skip
-        if "google.com" in final_url:
-            return None
-            
-        # Cari og:image
-        match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', resp.text)
-        if not match:
-            match = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', resp.text)
-        if match:
-            img_url = match.group(1)
-            # Kalau URL relatif, jadiin absolut
-            if img_url.startswith("/"):
-                from urllib.parse import urlparse
-                base = f"{urlparse(final_url).scheme}://{urlparse(final_url).netloc}"
-                img_url = base + img_url
-            return img_url
-    except Exception as e:
-        print(f"Thumbnail error: {e}")
-    return None
+
 
 def fetch_articles():
     articles = []
@@ -94,7 +69,7 @@ def fetch_articles():
     for keyword in KEYWORDS:
         url = (
             f"https://news.google.com/rss/search"
-            f"?q={requests.utils.quote(keyword)}+when:1d"
+            f"?q={requests.utils.quote(keyword)}+when:6h"
             f"&hl=id&gl=ID&ceid=ID:id"
         )
         try:
@@ -185,31 +160,107 @@ Aturan keras:
         return None
 
 
-def send_telegram(msg, image_url=None):
-    if image_url:
+def extract_keyword(title):
+    stopwords = {"di", "ke", "dari", "yang", "dan", "atau", "dengan", "untuk",
+                 "ini", "itu", "pada", "adalah", "akan", "jika", "karena",
+                 "per", "jadi", "bisa", "ada", "tidak", "lebih", "sudah"}
+    words = [w for w in title.lower().split() if w not in stopwords]
+    return " ".join(words[:3])
+
+
+def search_image(keyword):
+    try:
+        url = "https://api.pexels.com/v1/search"
+        resp = requests.get(url, params={
+            "query": keyword,
+            "per_page": 1,
+            "orientation": "landscape"
+        }, headers={
+            "Authorization": PEXELS_API_KEY
+        }, timeout=10)
+        data = resp.json()
+        if data.get("photos"):
+            return data["photos"][0]["src"]["large"]
+    except Exception as e:
+        print(f"Pexels error: {e}")
+    return None
+
+
+def add_watermark(image_url, watermark_text="IDR Watch 🇮🇩"):
+    try:
+        resp = requests.get(image_url, timeout=10)
+        img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+        img = img.resize((1200, 630), Image.LANCZOS)
+
+        # Overlay gelap di bawah
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        draw.rectangle(
+            [(0, img.height - 80), (img.width, img.height)],
+            fill=(0, 0, 0, 160)
+        )
+        img = Image.alpha_composite(img, overlay)
+
+        # Watermark
+        draw = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+        except:
+            font = ImageFont.load_default()
+
+        bbox = draw.textbbox((0, 0), watermark_text, font=font)
+        text_w = bbox[2] - bbox[0]
+        x = img.width - text_w - 20
+        y = img.height - 55
+        draw.text((x, y), watermark_text, font=font, fill=(255, 255, 255, 255))
+
+        img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        buf.seek(0)
+        return buf
+
+    except Exception as e:
+        print(f"Watermark error: {e}")
+        return None
+
+
+def send_telegram(msg, image_buf=None):
+    if image_buf:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-        payload = {
-            "chat_id": TELEGRAM_CHANNEL_ID,
-            "photo": image_url,
-            "caption": msg,
-            "parse_mode": "HTML"
-        }
+        try:
+            resp = requests.post(url, data={
+                "chat_id": TELEGRAM_CHANNEL_ID,
+                "caption": msg,
+                "parse_mode": "HTML"
+            }, files={
+                "photo": ("image.jpg", image_buf, "image/jpeg")
+            }, timeout=15)
+            if resp.status_code == 429:
+                retry_after = resp.json().get("parameters", {}).get("retry_after", 10)
+                print(f"Telegram rate limit, tunggu {retry_after}s...")
+                time.sleep(retry_after)
+                image_buf.seek(0)
+                requests.post(url, data={
+                    "chat_id": TELEGRAM_CHANNEL_ID,
+                    "caption": msg,
+                    "parse_mode": "HTML"
+                }, files={
+                    "photo": ("image.jpg", image_buf, "image/jpeg")
+                }, timeout=15)
+        except Exception as e:
+            print(f"Telegram error: {e}")
     else:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": TELEGRAM_CHANNEL_ID,
-            "text": msg,
-            "parse_mode": "HTML"
-        }
-    try:
-        resp = requests.post(url, json=payload, timeout=10)
-        if resp.status_code == 429:
-            retry_after = resp.json().get("parameters", {}).get("retry_after", 10)
-            print(f"Telegram rate limit, tunggu {retry_after}s...")
-            time.sleep(retry_after)
-            requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Telegram error: {e}")
+        try:
+            requests.post(url, json={
+                "chat_id": TELEGRAM_CHANNEL_ID,
+                "text": msg,
+                "parse_mode": "HTML"
+            }, timeout=10)
+        except Exception as e:
+            print(f"Telegram error: {e}")
+
 
 def main():
     now = datetime.now(WIB)
@@ -245,8 +296,12 @@ def main():
                 continue
 
         msg = f"📰 <b>{title}</b>\n\n{narasi}{FOOTER}"
-        image_url = get_thumbnail(url)
-        send_telegram(msg, image_url)
+
+        keyword = extract_keyword(title)
+        image_url = search_image(keyword)
+        image_buf = add_watermark(image_url) if image_url else None
+
+        send_telegram(msg, image_buf)
         print(f"Posted: {title}")
 
         posted_urls.add(url)
