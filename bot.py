@@ -3,46 +3,34 @@
 # ============================================================
 
 KEYWORDS = [
-    # Indonesia macro
-    "rupiah", "IDR", "ekonomi Indonesia", "pertumbuhan ekonomi Indonesia",
-    "inflasi Indonesia", "deflasi Indonesia", "BI rate", "suku bunga BI",
-    "Bank Indonesia", "cadangan devisa", "neraca perdagangan Indonesia",
-    "ekspor Indonesia", "impor Indonesia", "PMI Indonesia", "konsumsi Indonesia",
-    "investasi Indonesia", "APBN", "defisit APBN", "utang pemerintah Indonesia",
-    "surplus perdagangan", "daya beli", "harga BBM", "harga pangan", "pajak",
+    # Indonesia
+    "rupiah",
+    "USD/IDR",
+    "BI rate",
+    "Bank Indonesia",
+    "inflasi Indonesia",
+    "IHSG",
 
-    # Markets / equities
-    "saham", "pasar saham", "IHSG", "IDX", "LQ45", "emiten", "dividen",
-    "laporan keuangan", "kinerja kuartalan", "book building", "IPO", "right issue",
-    "buyback saham", "market cap", "blue chip", "investor asing", "net buy", "net sell",
-
-    # FX / global rates
-    "dolar", "USD", "USD/IDR", "rupiah melemah", "rupiah menguat",
-    "Fed rate", "suku bunga Fed", "The Fed", "FOMC", "inflasi AS",
-    "dolar AS", "yield obligasi AS", "Treasury", "DXY", "EUR/USD", "JPY/IDR", "CNY/IDR",
-
-    # Bonds / debt market
-    "obligasi", "SBN", "SUN", "yield", "imbal hasil", "surat utang",
-    "SRBI", "obligasi pemerintah", "obligasi korporasi", "kupon obligasi",
+    # Global macro
+    "Fed rate",
+    "FOMC",
+    "dolar AS",
+    "yield Treasury",
 
     # Crypto
-    "kripto", "crypto", "bitcoin", "BTC", "ethereum", "ETH",
-    "altcoin", "stablecoin", "blockchain", "ETF bitcoin", "ETF crypto",
-    "harga bitcoin", "harga ethereum", "adopsi kripto", "regulasi kripto",
+    "bitcoin",
+    "ethereum",
+    "kripto",
 
-    # China / global economy
-    "China economy", "ekonomi China", "PBOC", "yuan", "CNY",
-    "stimulus China", "pertumbuhan China", "inflasi China", "PMI China",
-    "manufaktur China", "ekspor China",
+    # China
+    "China economy",
+    "ekonomi China",
+    "yuan",
 
     # Commodities
-    "emas", "gold", "minyak", "oil", "brent", "WTI",
-    "batubara", "copper", "nikel", "CPO", "palm oil", "gas alam",
-
-    # Extra macro/news triggers
-    "resesi", "perlambatan ekonomi", "stagflasi", "krisis likuiditas",
-    "sentimen pasar", "risk on", "risk off", "arus modal", "capital outflow",
-    "capital inflow", "geopolitik", "perang dagang", "tarif", "sanksi ekonomi"
+    "emas",
+    "minyak",
+    "nikel"
 ]
 
 BLACKLIST = [
@@ -51,7 +39,7 @@ BLACKLIST = [
 
 MAX_ARTICLES_PER_RUN = 1
 MAX_STORED_URLS = 100
-FOOTER = '\n\n— <a href="https://t.me/idr_watch">IDR Watch 🇮🇩</a>'
+FOOTER = '\n\n— <a href="https://t.me/idrwatch">IDR Watch 🇮🇩</a>'
 ON_API_FAIL = "skip"
 
 # ============================================================
