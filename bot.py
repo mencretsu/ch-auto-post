@@ -200,6 +200,7 @@ Aturan keras:
 - Tidak ada kalimat pembuka seperti "Jadi", "Nah", "Eh"
 - Kalau ga ada dampak global yang relevan, skip baris kedua
 - Bahasa Indonesia tapi boleh campur 1-2 kata Inggris yang udah umum
+- Jangan ulangi atau parafrase judul di kalimat pertama, langsung ke konteks atau dampaknya
 """
     try:
         return gemini(prompt)
