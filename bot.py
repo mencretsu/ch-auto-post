@@ -364,8 +364,11 @@ def main():
         msg = f"🏦 <b>{title}</b>\n\n{narasi}{FOOTER}"
 
         keyword = extract_keyword(title)
+        print(f"Keyword gambar: {keyword}")
         image_url = search_image(keyword)
+        print(f"Image URL: {image_url}")
         image_buf = add_watermark(image_url) if image_url else None
+        print(f"Image buf: {'ada' if image_buf else 'kosong'}")
 
         send_telegram(msg, image_buf)
         print(f"Posted: {title}")
