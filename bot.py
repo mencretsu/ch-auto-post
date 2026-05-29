@@ -11,7 +11,7 @@ BLACKLIST = [
     "pilkada", "gosip", "artis", "sinetron", "resep", "olahraga"
 ]
 
-MAX_ARTICLES_PER_RUN = 5
+MAX_ARTICLES_PER_RUN = 1
 MAX_STORED_URLS = 100
 FOOTER = "\n\n— IDR Watch 🇮🇩"
 ON_API_FAIL = "skip"
@@ -27,6 +27,7 @@ import requests
 from datetime import datetime
 import pytz
 from google import genai
+from urllib.parse import urljoin
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
@@ -56,7 +57,20 @@ def save_posted(data):
 def clean_title(title):
     title = re.sub(r'\s[-|]\s.*$', '', title).strip()
     return title
-
+def get_thumbnail(url):
+    try:
+        resp = requests.get(url, timeout=5, headers={
+            "User-Agent": "Mozilla/5.0"
+        })
+        # Cari og:image di HTML
+        match = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', resp.text)
+        if not match:
+            match = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', resp.text)
+        if match:
+            return match.group(1)
+    except:
+        pass
+    return None
 
 def fetch_articles():
     articles = []
@@ -156,26 +170,31 @@ Aturan keras:
         return None
 
 
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    try:
-        resp = requests.post(url, json={
+def send_telegram(msg, image_url=None):
+    if image_url:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+        payload = {
+            "chat_id": TELEGRAM_CHANNEL_ID,
+            "photo": image_url,
+            "caption": msg,
+            "parse_mode": "HTML"
+        }
+    else:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
             "chat_id": TELEGRAM_CHANNEL_ID,
             "text": msg,
             "parse_mode": "HTML"
-        }, timeout=10)
+        }
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
         if resp.status_code == 429:
             retry_after = resp.json().get("parameters", {}).get("retry_after", 10)
             print(f"Telegram rate limit, tunggu {retry_after}s...")
             time.sleep(retry_after)
-            requests.post(url, json={
-                "chat_id": TELEGRAM_CHANNEL_ID,
-                "text": msg,
-                "parse_mode": "HTML"
-            }, timeout=10)
+            requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"Telegram error: {e}")
-
 
 def main():
     now = datetime.now(WIB)
@@ -211,7 +230,8 @@ def main():
                 continue
 
         msg = f"📰 <b>{title}</b>\n\n{narasi}{FOOTER}"
-        send_telegram(msg)
+        image_url = get_thumbnail(url)
+        send_telegram(msg, image_url)
         print(f"Posted: {title}")
 
         posted_urls.add(url)
