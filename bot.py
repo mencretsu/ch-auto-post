@@ -3,8 +3,46 @@
 # ============================================================
 
 KEYWORDS = [
-    "rupiah", "ekonomi Indonesia", "BI rate", "inflasi Indonesia", "kripto", "bitcoin", "saham", "dolar",
-    "IHSG", "Bank Indonesia", "Fed rate", "China economy"
+    # Indonesia macro
+    "rupiah", "IDR", "ekonomi Indonesia", "pertumbuhan ekonomi Indonesia",
+    "inflasi Indonesia", "deflasi Indonesia", "BI rate", "suku bunga BI",
+    "Bank Indonesia", "cadangan devisa", "neraca perdagangan Indonesia",
+    "ekspor Indonesia", "impor Indonesia", "PMI Indonesia", "konsumsi Indonesia",
+    "investasi Indonesia", "APBN", "defisit APBN", "utang pemerintah Indonesia",
+    "surplus perdagangan", "daya beli", "harga BBM", "harga pangan", "pajak",
+
+    # Markets / equities
+    "saham", "pasar saham", "IHSG", "IDX", "LQ45", "emiten", "dividen",
+    "laporan keuangan", "kinerja kuartalan", "book building", "IPO", "right issue",
+    "buyback saham", "market cap", "blue chip", "investor asing", "net buy", "net sell",
+
+    # FX / global rates
+    "dolar", "USD", "USD/IDR", "rupiah melemah", "rupiah menguat",
+    "Fed rate", "suku bunga Fed", "The Fed", "FOMC", "inflasi AS",
+    "dolar AS", "yield obligasi AS", "Treasury", "DXY", "EUR/USD", "JPY/IDR", "CNY/IDR",
+
+    # Bonds / debt market
+    "obligasi", "SBN", "SUN", "yield", "imbal hasil", "surat utang",
+    "SRBI", "obligasi pemerintah", "obligasi korporasi", "kupon obligasi",
+
+    # Crypto
+    "kripto", "crypto", "bitcoin", "BTC", "ethereum", "ETH",
+    "altcoin", "stablecoin", "blockchain", "ETF bitcoin", "ETF crypto",
+    "harga bitcoin", "harga ethereum", "adopsi kripto", "regulasi kripto",
+
+    # China / global economy
+    "China economy", "ekonomi China", "PBOC", "yuan", "CNY",
+    "stimulus China", "pertumbuhan China", "inflasi China", "PMI China",
+    "manufaktur China", "ekspor China",
+
+    # Commodities
+    "emas", "gold", "minyak", "oil", "brent", "WTI",
+    "batubara", "copper", "nikel", "CPO", "palm oil", "gas alam",
+
+    # Extra macro/news triggers
+    "resesi", "perlambatan ekonomi", "stagflasi", "krisis likuiditas",
+    "sentimen pasar", "risk on", "risk off", "arus modal", "capital outflow",
+    "capital inflow", "geopolitik", "perang dagang", "tarif", "sanksi ekonomi"
 ]
 
 BLACKLIST = [
@@ -13,7 +51,7 @@ BLACKLIST = [
 
 MAX_ARTICLES_PER_RUN = 1
 MAX_STORED_URLS = 100
-FOOTER = "\n\n— IDR Watch 🇮🇩"
+FOOTER = '\n\n— <a href="https://t.me/idr_watch">IDR Watch 🇮🇩</a>'
 ON_API_FAIL = "skip"
 
 # ============================================================
@@ -220,7 +258,7 @@ def search_image(keyword):
     return None
 
 
-def add_watermark(image_url, watermark_text="IDR Watch 🇮🇩"):
+def add_watermark(image_url, watermark_text="@idrwatch"):
     try:
         resp = requests.get(image_url, timeout=10)
         img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
@@ -329,7 +367,7 @@ def main():
             if ON_API_FAIL == "skip":
                 continue
 
-        msg = f"📰 <b>{title}</b>\n\n{narasi}{FOOTER}"
+        msg = f"🏦 <b>{title}</b>\n\n{narasi}{FOOTER}"
 
         keyword = extract_keyword(title)
         image_url = search_image(keyword)
