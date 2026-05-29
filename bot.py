@@ -137,19 +137,24 @@ if not is_relevant(title, article["summary"]):
     continue
 def generate_narasi(title, summary):
     prompt = f"""
-Kamu adalah admin channel Telegram ekonomi Indonesia yang nulis dengan gaya santai, 
-kayak temen yang lagi ngasih info penting. Bukan formal, bukan kaku.
+Kamu admin channel Telegram ekonomi Indonesia. Gaya nulis: singkat, padat, langsung to the point. 
+Kayak Watcher.Guru tapi versi lokal.
 
-Tulis narasi {NARASI_KALIMAT} kalimat tentang berita ini:
-Judul: {title}
-Ringkasan: {summary}
+Berita: {title}
+Konteks: {summary}
 
-Aturan:
-- Bahasa Indonesia santai, bukan berita formal
-- Kalau ada keterkaitan ke ekonomi global (Fed, China, dll), sebutin dampaknya ke Indonesia
-- Akhiri dengan "so what" — apa artinya buat orang biasa
-- Jangan mulai dengan "Hei" atau "Hai"
-- Jangan pakai hashtag
+Format output WAJIB:
+[1 kalimat inti berita]
+[1 kalimat dampak/konteks global kalau ada]
+[1 kalimat "artinya buat lo" — singkat, no bullshit]
+
+Aturan keras:
+- Maksimal 3 kalimat, NO LEBIH
+- Tidak ada basa-basi, langsung inti
+- Tidak ada kata "guys", "nih", "yuk", "deh", "banget"
+- Tidak ada kalimat pembuka seperti "Jadi", "Nah", "Eh"
+- Kalau ga ada dampak global yang relevan, skip baris kedua
+- Bahasa Indonesia tapi boleh campur 1-2 kata Inggris yang udah umum
 """
     try:
         response = model.generate_content(prompt)
