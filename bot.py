@@ -2,34 +2,20 @@
 # KONFIGURASI
 # ============================================================
 
-# Keyword berita yang dipantau (Google News RSS)
 KEYWORDS = [
-    "rupiah", "ekonomi Indonesia", "BI rate", "inflasi Indonesia", "kripto","bitcoin","saham","dolar",
+    "rupiah", "ekonomi Indonesia", "BI rate", "inflasi Indonesia", "kripto", "bitcoin", "saham", "dolar",
     "IHSG", "Bank Indonesia", "Fed rate", "China economy"
 ]
 
-# Keyword yang diskip (berita ga relevan)
 BLACKLIST = [
     "pilkada", "gosip", "artis", "sinetron", "resep", "olahraga"
 ]
 
-# Maksimum berita diproses per run
 MAX_ARTICLES_PER_RUN = 5
-
-# Maksimum URL disimpan di posted.json (auto-trim)
 MAX_STORED_URLS = 100
-
-# Panjang narasi (jumlah kalimat)
-NARASI_KALIMAT = 3
-
-# Footer tiap post
 FOOTER = "\n\n— IDR Watch 🇮🇩"
-
-# Behavior kalau Gemini API gagal: "skip" atau "retry"
 ON_API_FAIL = "skip"
 
-# ============================================================
-# JANGAN EDIT DI BAWAH INI KECUALI LO TAU APA YANG LO LAKUIN
 # ============================================================
 
 import os
@@ -40,7 +26,7 @@ import feedparser
 import requests
 from datetime import datetime
 import pytz
-import google.generativeai as genai
+from google import genai
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
@@ -49,8 +35,7 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 POSTED_FILE = "posted.json"
 WIB = pytz.timezone("Asia/Jakarta")
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.5-flash")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 def load_posted():
@@ -69,7 +54,6 @@ def save_posted(data):
 
 
 def clean_title(title):
-    # Buang suffix sumber berita kayak "- Kompas.com", "| Detik" dll
     title = re.sub(r'\s[-|]\s.*$', '', title).strip()
     return title
 
@@ -86,12 +70,11 @@ def fetch_articles():
         )
         try:
             feed = feedparser.parse(url)
-            if feed.bozo:  # feedparser flag kalau parsing gagal
+            if feed.bozo:
                 print(f"Warning: gagal parse feed untuk '{keyword}'")
                 continue
             for entry in feed.entries[:3]:
                 title = clean_title(entry.title)
-                # Skip duplikat judul mirip
                 if title.lower() in seen_titles:
                     continue
                 seen_titles.add(title.lower())
@@ -111,25 +94,63 @@ def is_blacklisted(title):
     return any(bl.lower() in title.lower() for bl in BLACKLIST)
 
 
-def generate_narasi(title, summary):
-    prompt = f"""
-Kamu adalah admin channel Telegram ekonomi Indonesia yang nulis dengan gaya santai, 
-kayak temen yang lagi ngasih info penting. Bukan formal, bukan kaku.
+def gemini(prompt):
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
+    return response.text.strip()
 
-Tulis narasi {NARASI_KALIMAT} kalimat tentang berita ini:
+
+def is_relevant(title, summary):
+    prompt = f"""
+Kamu kurator channel ekonomi Indonesia. Tentukan apakah berita ini cukup penting dan relevan untuk dipost ke channel.
+
 Judul: {title}
 Ringkasan: {summary}
 
-Aturan:
-- Bahasa Indonesia santai, bukan berita formal
-- Kalau ada keterkaitan ke ekonomi global (Fed, China, dll), sebutin dampaknya ke Indonesia
-- Akhiri dengan "so what" — apa artinya buat orang biasa
-- Jangan mulai dengan "Hei" atau "Hai"
-- Jangan pakai hashtag
+Kriteria LAYAK:
+- Berdampak langsung ke ekonomi Indonesia atau masyarakat umum
+- Ada angka/data signifikan (kurs, inflasi, suku bunga, dll)
+- Keterkaitan global yang dampaknya nyata ke Indonesia
+
+Kriteria TIDAK LAYAK:
+- Berita daerah terlalu lokal dan tidak berdampak nasional
+- Prediksi/opini tanpa data kuat
+- Berita seremonial/rapat tanpa output jelas
+
+Jawab hanya dengan: YA atau TIDAK
 """
     try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        result = gemini(prompt)
+        return result.upper().startswith("YA")
+    except:
+        return False
+
+
+def generate_narasi(title, summary):
+    prompt = f"""
+Kamu admin channel Telegram ekonomi Indonesia. Gaya nulis: singkat, padat, langsung to the point.
+Kayak Watcher.Guru tapi versi lokal.
+
+Berita: {title}
+Konteks: {summary}
+
+Format output WAJIB:
+[1 kalimat inti berita]
+[1 kalimat dampak/konteks global kalau ada]
+[1 kalimat "artinya buat lo" — singkat, no bullshit]
+
+Aturan keras:
+- Maksimal 3 kalimat, NO LEBIH
+- Tidak ada basa-basi, langsung inti
+- Tidak ada kata "guys", "nih", "yuk", "deh", "banget"
+- Tidak ada kalimat pembuka seperti "Jadi", "Nah", "Eh"
+- Kalau ga ada dampak global yang relevan, skip baris kedua
+- Bahasa Indonesia tapi boleh campur 1-2 kata Inggris yang udah umum
+"""
+    try:
+        return gemini(prompt)
     except Exception as e:
         print(f"Gemini error: {e}")
         return None
@@ -144,11 +165,9 @@ def send_telegram(msg):
             "parse_mode": "HTML"
         }, timeout=10)
         if resp.status_code == 429:
-            # Rate limit — tunggu sesuai retry_after dari Telegram
             retry_after = resp.json().get("parameters", {}).get("retry_after", 10)
             print(f"Telegram rate limit, tunggu {retry_after}s...")
             time.sleep(retry_after)
-            # Kirim ulang sekali
             requests.post(url, json={
                 "chat_id": TELEGRAM_CHANNEL_ID,
                 "text": msg,
@@ -199,7 +218,6 @@ def main():
         posted_data["posted"] = list(posted_urls)
         count += 1
 
-        # Jeda antar post biar ga spam ke Telegram
         if count < MAX_ARTICLES_PER_RUN:
             time.sleep(2)
 
