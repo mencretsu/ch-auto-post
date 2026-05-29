@@ -4,7 +4,7 @@
 
 # Keyword berita yang dipantau (Google News RSS)
 KEYWORDS = [
-    "rupiah", "ekonomi Indonesia", "BI rate", "inflasi Indonesia",
+    "rupiah", "ekonomi Indonesia", "BI rate", "inflasi Indonesia", "kripto","bitcoin","saham","dolar",
     "IHSG", "Bank Indonesia", "Fed rate", "China economy"
 ]
 
@@ -107,7 +107,34 @@ def fetch_articles():
 def is_blacklisted(title):
     return any(bl.lower() in title.lower() for bl in BLACKLIST)
 
+def is_relevant(title, summary):
+    prompt = f"""
+Kamu kurator channel ekonomi Indonesia. Tentukan apakah berita ini cukup penting dan relevan untuk dipost ke channel.
 
+Judul: {title}
+Ringkasan: {summary}
+
+Kriteria LAYAK:
+- Berdampak langsung ke ekonomi Indonesia atau masyarakat umum
+- Ada angka/data signifikan (kurs, inflasi, suku bunga, dll)
+- Keterkaitan global yang dampaknya nyata ke Indonesia
+
+Kriteria TIDAK LAYAK:
+- Berita daerah terlalu lokal dan tidak berdampak nasional
+- Prediksi/opini tanpa data kuat
+- Berita seremonial/rapat tanpa output jelas
+
+Jawab hanya dengan: YA atau TIDAK
+"""
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip().upper().startswith("YA")
+    except:
+        return False
+
+if not is_relevant(title, article["summary"]):
+    print(f"Skip (tidak relevan): {title}")
+    continue
 def generate_narasi(title, summary):
     prompt = f"""
 Kamu adalah admin channel Telegram ekonomi Indonesia yang nulis dengan gaya santai, 
