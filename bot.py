@@ -103,7 +103,7 @@ def scrape_local_news_image(keyword):
                 return img_url
         
         # Fallback ke Kompas
-        search_url = f"https://search.kompas.com/search?q={requests.utils.quote(keyword)}"
+        search_url = f"https://search.kompas.com/search?q={requests.utils.quote(keyword)}&sort=latest"
         resp = requests.get(search_url, headers=headers, timeout=10)
         resp.raise_for_status()
         
