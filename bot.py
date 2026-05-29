@@ -56,16 +56,14 @@ from urllib.parse import urlparse
 import pytz
 from PIL import Image, ImageDraw, ImageFont
 from google import genai
+from duckduckgo_search import DDGS  # <-- TAMBAH INI
 import random
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
-GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
-GOOGLE_CX = os.environ["GOOGLE_CX"]
 
 POSTED_FILE = "posted.json"
 WIB = pytz.timezone("Asia/Jakarta")
-# Ganti GEMINI_API_KEY single jadi list
 GEMINI_KEYS = [
     os.environ["GEMINI_API_KEY_1"],
     os.environ["GEMINI_API_KEY_2"],
@@ -225,33 +223,24 @@ Jawab keyword saja dalam SATU BARIS, tanpa penjelasan, tanpa tanda panah.
 """
     try:
         result = gemini(prompt)
-        # Ambil baris pertama aja, buang newline
         return result.split("\n")[0].strip()
     except:
         return "indonesia economy"
+
+
 def search_image(keyword):
     try:
-        resp = requests.get(
-            "https://www.googleapis.com/customsearch/v1",
-            params={
-                "key": GOOGLE_API_KEY,
-                "cx": GOOGLE_CX,
-                "q": keyword,
-                "searchType": "image",
-                "num": 1,
-                "imgSize": "large",
-                "imgType": "photo",
-                "safe": "active"
-            },
-            timeout=10
+        results = DDGS().images(
+            keywords=keyword,
+            max_results=1
         )
-        data = resp.json()
-        print(f"Google API response: {data.get('error') or len(data.get('items', []))} items")
-        if data.get("items"):
-            return data["items"][0]["link"]
+        if results:
+            return results[0]["image"]
+        print(f"No images found for: {keyword}")
+        return None
     except Exception as e:
-        print(f"Google image error: {e}")
-    return None
+        print(f"DuckDuckGo image search error: {e}")
+        return None
 
 
 def add_watermark(image_url, watermark_text="@idrwatch"):
