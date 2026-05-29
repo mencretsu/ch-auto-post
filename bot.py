@@ -161,11 +161,23 @@ Aturan keras:
 
 
 def extract_keyword(title):
-    stopwords = {"di", "ke", "dari", "yang", "dan", "atau", "dengan", "untuk",
-                 "ini", "itu", "pada", "adalah", "akan", "jika", "karena",
-                 "per", "jadi", "bisa", "ada", "tidak", "lebih", "sudah"}
-    words = [w for w in title.lower().split() if w not in stopwords]
-    return " ".join(words[:3])
+    prompt = f"""
+Dari judul berita ini, buat 2-3 kata keyword bahasa Inggris untuk search foto di Pexels.
+Fokus ke tema visual yang relevan, bukan nama orang/institusi.
+
+Judul: {title}
+
+Contoh:
+"BI Rate naik 25 bps" → "indonesia central bank money"
+"Rupiah melemah ke 17.900" → "currency exchange indonesia"
+"Harga BBM naik" → "fuel gas price indonesia"
+
+Jawab keyword saja, tanpa penjelasan.
+"""
+    try:
+        return gemini(prompt)
+    except:
+        return "indonesia economy"
 
 
 def search_image(keyword):
