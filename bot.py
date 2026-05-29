@@ -27,7 +27,7 @@ KEYWORDS = [
 BLACKLIST = ["pilkada", "gosip", "artis", "sinetron", "resep", "olahraga"]
 MAX_ARTICLES_PER_RUN = 1
 MAX_STORED_URLS = 100
-FOOTER = '\n\n— <a href="https://t.me/idrwatch">IDR Watch 🇮🇩</a>'
+FOOTER = '\n\n- <a href="https://t.me/idrwatch">IDR Watch</a>'
 ON_API_FAIL = "skip"
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
