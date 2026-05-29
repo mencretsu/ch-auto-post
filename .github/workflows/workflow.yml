@@ -6,10 +6,8 @@ on:
     - cron: '0 10 * * *'  # 17.00 WIB
     - cron: '0 13 * * *'  # 20.00 WIB
   workflow_dispatch:
-
 permissions:
   contents: write
-
 jobs:
   post-news:
     runs-on: ubuntu-latest
@@ -18,13 +16,11 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-      - run: pip install feedparser google-genai requests pytz Pillow
+      - run: pip install feedparser google-genai requests pytz Pillow duckduckgo-search
       - run: python bot.py
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          GOOGLE_CX: ${{ secrets.GOOGLE_CX }}
           GEMINI_API_KEY_1: ${{ secrets.GEMINI_API_KEY_1 }}
           GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
           GEMINI_API_KEY_3: ${{ secrets.GEMINI_API_KEY_3 }}
