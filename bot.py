@@ -211,23 +211,24 @@ Aturan keras:
 
 def extract_keyword(title):
     prompt = f"""
-Dari judul berita ini, buat 2-3 kata keyword bahasa Inggris untuk search foto di Pexels.
+Dari judul berita ini, buat 2-3 kata keyword bahasa Inggris untuk search foto di Google.
 Fokus ke tema visual yang relevan, bukan nama orang/institusi.
 
 Judul: {title}
 
 Contoh:
-"BI Rate naik 25 bps" → "indonesia central bank money"
-"Rupiah melemah ke 17.900" → "currency exchange indonesia"
-"Harga BBM naik" → "fuel gas price indonesia"
+"BI Rate naik 25 bps" → indonesia central bank money
+"Rupiah melemah ke 17.900" → currency exchange indonesia
+"Harga BBM naik" → fuel gas price indonesia
 
-Jawab keyword saja, tanpa penjelasan.
+Jawab keyword saja dalam SATU BARIS, tanpa penjelasan, tanpa tanda panah.
 """
     try:
-        return gemini(prompt)
+        result = gemini(prompt)
+        # Ambil baris pertama aja, buang newline
+        return result.split("\n")[0].strip()
     except:
         return "indonesia economy"
-
 def search_image(keyword):
     try:
         resp = requests.get(
@@ -245,6 +246,7 @@ def search_image(keyword):
             timeout=10
         )
         data = resp.json()
+        print(f"Google API response: {data.get('error') or len(data.get('items', []))} items")
         if data.get("items"):
             return data["items"][0]["link"]
     except Exception as e:
