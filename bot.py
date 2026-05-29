@@ -56,7 +56,6 @@ from urllib.parse import urlparse
 import pytz
 from PIL import Image, ImageDraw, ImageFont
 from google import genai
-from duckduckgo_search import DDGS  # <-- TAMBAH INI
 import random
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -207,43 +206,46 @@ Aturan keras:
         return None
 
 
-def extract_keyword(title):
-    prompt = f"""
-Dari judul berita ini, buat 2-3 kata keyword bahasa Inggris untuk search foto di Google.
-Fokus ke tema visual yang relevan, bukan nama orang/institusi.
-
-Judul: {title}
-
-Contoh:
-"BI Rate naik 25 bps" → indonesia central bank money
-"Rupiah melemah ke 17.900" → currency exchange indonesia
-"Harga BBM naik" → fuel gas price indonesia
-
-Jawab keyword saja dalam SATU BARIS, tanpa penjelasan, tanpa tanda panah.
-"""
+def fetch_article_image(article_url):
+    """Extract gambar dari artikel link"""
     try:
-        result = gemini(prompt)
-        return result.split("\n")[0].strip()
-    except:
-        return "indonesia economy"
-
-
-def search_image(keyword):
-    try:
-        results = DDGS().images(
-            keywords=keyword,
-            max_results=1
-        )
-        if results:
-            return results[0]["image"]
-        print(f"No images found for: {keyword}")
+        resp = requests.get(article_url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
+        
+        # Cari og:image meta tag (paling reliable)
+        match = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', resp.text)
+        if match:
+            img_url = match.group(1)
+            print(f"Found og:image: {img_url[:60]}...")
+            return img_url
+        
+        # Fallback: cari twitter:image
+        match = re.search(r'<meta\s+name=["\']twitter:image["\']\s+content=["\']([^"\']+)["\']', resp.text)
+        if match:
+            img_url = match.group(1)
+            print(f"Found twitter:image: {img_url[:60]}...")
+            return img_url
+        
+        # Fallback: cari img tag pertama yang reasonable
+        img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', resp.text)
+        if img_match:
+            url = img_match.group(1)
+            if url.startswith('http'):
+                print(f"Found img tag: {url[:60]}...")
+                return url
+        
+        print(f"No image found in article")
         return None
     except Exception as e:
-        print(f"DuckDuckGo image search error: {e}")
+        print(f"Article image extraction error: {e}")
         return None
 
 
 def add_watermark(image_url, watermark_text="@idrwatch"):
+    if not image_url:
+        return None
+    
     try:
         resp = requests.get(image_url, timeout=10)
         img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
@@ -306,7 +308,8 @@ def send_telegram(msg, image_buf=None):
                     "photo": ("image.jpg", image_buf, "image/jpeg")
                 }, timeout=15)
         except Exception as e:
-            print(f"Telegram error: {e}")
+            print(f"Telegram photo error: {e}, fallback to text-only")
+            send_telegram(msg)
     else:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         try:
@@ -354,10 +357,9 @@ def main():
 
         msg = f"🏦 <b>{title}</b>\n\n{narasi}{FOOTER}"
 
-        keyword = extract_keyword(title)
-        print(f"Keyword gambar: {keyword}")
-        image_url = search_image(keyword)
-        print(f"Image URL: {image_url}")
+        # EXTRACT GAMBAR DARI ARTIKEL
+        image_url = fetch_article_image(url)
+        print(f"Article image URL: {image_url}")
         image_buf = add_watermark(image_url) if image_url else None
         print(f"Image buf: {'ada' if image_buf else 'kosong'}")
 
