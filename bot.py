@@ -93,17 +93,20 @@ def clean_title(title):
 def extract_real_url_from_google_news(google_news_url):
     """
     Extract real article URL from Google News redirect
-    Google News format: /url?q=REAL_URL_ENCODED
+    Google News format: https://news.google.com/url?q=REAL_URL_ENCODED
     """
     try:
-        match = re.search(r'/url\?q=([^&]+)', google_news_url)
+        # Method 1: Parse query parameter q=
+        match = re.search(r'[?&]q=([^&]+)', google_news_url)
         if match:
             real_url = unquote(match.group(1))
-            print(f"✓ Real URL extracted: {real_url[:70]}...")
-            return real_url
+            if real_url.startswith('http'):
+                print(f"✓ Real URL extracted: {real_url[:70]}...")
+                return real_url
     except Exception as e:
         print(f"⚠ URL extraction error: {e}")
     
+    # Fallback
     return google_news_url
 
 
@@ -230,6 +233,43 @@ Aturan keras:
         return None
 
 
+def is_valid_image_url(image_url):
+    """Validate image URL - exclude Google/logo/favicon images"""
+    if not image_url or not image_url.startswith('http'):
+        return False
+    
+    # Block suspicious domains
+    blocked_domains = [
+        'google', 'gstatic', 'ggpht', 'doubleclick', 'google.com',
+        'googleusercontent', 'facebook.com', 'instagram.com',
+        'twitter.com', 'telegram', 'gravatar'
+    ]
+    
+    # Block suspicious paths
+    blocked_paths = [
+        'logo', 'icon', 'favicon', 'avatar', 'profile', 'user', 
+        'ads', 'ad.', '.gif', '1x1', 'placeholder', 'blank'
+    ]
+    
+    url_lower = image_url.lower()
+    
+    # Check domains
+    for domain in blocked_domains:
+        if domain in url_lower:
+            return False
+    
+    # Check paths
+    for path in blocked_paths:
+        if path in url_lower:
+            return False
+    
+    # Check image dimensions (1x1 atau terlalu kecil = logo)
+    if '1x1' in url_lower or 'width=1' in url_lower or 'height=1' in url_lower:
+        return False
+    
+    return True
+
+
 def fetch_article_image(article_url):
     """Extract gambar dari artikel link"""
     try:
@@ -242,39 +282,47 @@ def fetch_article_image(article_url):
         match = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', resp.text)
         if match:
             img_url = match.group(1)
-            print(f"✓ Found og:image: {img_url[:60]}...")
-            return img_url
+            if is_valid_image_url(img_url):
+                print(f"✓ Found og:image: {img_url[:60]}...")
+                return img_url
+            else:
+                print(f"⊘ og:image blocked (suspicious): {img_url[:60]}...")
         
         # Priority 2: twitter:image
         match = re.search(r'<meta\s+name=["\']twitter:image["\']\s+content=["\']([^"\']+)["\']', resp.text)
         if match:
             img_url = match.group(1)
-            print(f"✓ Found twitter:image: {img_url[:60]}...")
-            return img_url
+            if is_valid_image_url(img_url):
+                print(f"✓ Found twitter:image: {img_url[:60]}...")
+                return img_url
+            else:
+                print(f"⊘ twitter:image blocked (suspicious): {img_url[:60]}...")
         
         # Priority 3: article:image (untuk news articles)
         match = re.search(r'<meta\s+property=["\']article:image["\']\s+content=["\']([^"\']+)["\']', resp.text)
         if match:
             img_url = match.group(1)
-            print(f"✓ Found article:image: {img_url[:60]}...")
-            return img_url
+            if is_valid_image_url(img_url):
+                print(f"✓ Found article:image: {img_url[:60]}...")
+                return img_url
+            else:
+                print(f"⊘ article:image blocked (suspicious): {img_url[:60]}...")
         
         # Priority 4: img tag dengan alt text yang masuk akal
         img_matches = re.findall(r'<img[^>]+src=["\']([^"\']+)["\'][^>]*alt=["\']([^"\']+)["\']', resp.text)
         for url, alt_text in img_matches:
-            if url.startswith('http') and len(alt_text) > 5 and 'logo' not in alt_text.lower():
+            if url.startswith('http') and len(alt_text) > 5 and is_valid_image_url(url):
                 print(f"✓ Found img tag: {url[:60]}...")
                 return url
         
-        # Priority 5: standalone img tag
-        img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', resp.text)
-        if img_match:
-            url = img_match.group(1)
-            if url.startswith('http'):
-                print(f"✓ Found img tag (fallback): {url[:60]}...")
+        # Priority 5: img tag tanpa syarat tapi validate
+        img_matches = re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', resp.text)
+        for url in img_matches:
+            if is_valid_image_url(url):
+                print(f"✓ Found valid img tag: {url[:60]}...")
                 return url
         
-        print(f"✗ No image found in article")
+        print(f"✗ No valid image found in article")
         return None
         
     except Exception as e:
@@ -488,12 +536,17 @@ def main():
         msg = f"🏦 <b>{title}</b>\n\n{narasi}{FOOTER}"
 
         # EXTRACT GAMBAR DARI ARTIKEL
+        print(f"    → Extracting image...")
         image_url = fetch_article_image(url)
-        image_buf = add_watermark(image_url) if image_url else None
+        image_buf = None
         
-        # FALLBACK KE PLACEHOLDER KALAU GAMBAR KOSONG
+        # Try add watermark if valid image found
+        if image_url:
+            image_buf = add_watermark(image_url)
+        
+        # FALLBACK KE PLACEHOLDER KALAU GAMBAR KOSONG ATAU SUSPICIOUS
         if not image_buf:
-            print(f"    → Creating placeholder image...")
+            print(f"    → Creating placeholder image instead...")
             image_buf = create_placeholder_image(title)
 
         send_telegram(msg, image_buf)
