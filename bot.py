@@ -60,7 +60,8 @@ import random
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
-PEXELS_API_KEY = os.environ["PEXELS_API_KEY"]
+GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
+GOOGLE_CX = os.environ["GOOGLE_CX"]
 
 POSTED_FILE = "posted.json"
 WIB = pytz.timezone("Asia/Jakarta")
@@ -227,22 +228,27 @@ Jawab keyword saja, tanpa penjelasan.
     except:
         return "indonesia economy"
 
-
 def search_image(keyword):
     try:
-        url = "https://api.pexels.com/v1/search"
-        resp = requests.get(url, params={
-            "query": keyword,
-            "per_page": 1,
-            "orientation": "landscape"
-        }, headers={
-            "Authorization": PEXELS_API_KEY
-        }, timeout=10)
+        resp = requests.get(
+            "https://www.googleapis.com/customsearch/v1",
+            params={
+                "key": GOOGLE_API_KEY,
+                "cx": GOOGLE_CX,
+                "q": keyword,
+                "searchType": "image",
+                "num": 1,
+                "imgSize": "large",
+                "imgType": "photo",
+                "safe": "active"
+            },
+            timeout=10
+        )
         data = resp.json()
-        if data.get("photos"):
-            return data["photos"][0]["src"]["large"]
+        if data.get("items"):
+            return data["items"][0]["link"]
     except Exception as e:
-        print(f"Pexels error: {e}")
+        print(f"Google image error: {e}")
     return None
 
 
