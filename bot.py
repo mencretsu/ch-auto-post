@@ -30,15 +30,20 @@ from urllib.parse import urlparse
 import pytz
 from PIL import Image, ImageDraw, ImageFont
 from google import genai
+import random
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHANNEL_ID = os.environ["TELEGRAM_CHANNEL_ID"]
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 PEXELS_API_KEY = os.environ["PEXELS_API_KEY"]
 
 POSTED_FILE = "posted.json"
 WIB = pytz.timezone("Asia/Jakarta")
-
+# Ganti GEMINI_API_KEY single jadi list
+GEMINI_KEYS = [
+    os.environ["GEMINI_API_KEY_1"],
+    os.environ["GEMINI_API_KEY_2"],
+    os.environ["GEMINI_API_KEY_3"],
+]
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 
@@ -97,13 +102,31 @@ def fetch_articles():
 def is_blacklisted(title):
     return any(bl.lower() in title.lower() for bl in BLACKLIST)
 
+_gemini_key_index = 0
+
+def get_gemini_client():
+    global _gemini_key_index
+    key = GEMINI_KEYS[_gemini_key_index % len(GEMINI_KEYS)]
+    return genai.Client(api_key=key)
 
 def gemini(prompt):
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt
-    )
-    return response.text.strip()
+    global _gemini_key_index
+    for i in range(len(GEMINI_KEYS)):
+        try:
+            client = get_gemini_client()
+            response = client.models.generate_content(
+                model="gemini-2.5-flash-lite",
+                contents=prompt
+            )
+            return response.text.strip()
+        except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                print(f"Key {_gemini_key_index + 1} kena limit, rotate ke key berikutnya...")
+                _gemini_key_index += 1
+                continue
+            raise e
+    print("Semua Gemini key kena limit!")
+    return None
 
 
 def is_relevant(title, summary):
