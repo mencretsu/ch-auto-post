@@ -4,7 +4,9 @@ on:
     - cron: '0 0 * * *'   # 07.00 WIB
     - cron: '0 5 * * *'   # 12.00 WIB
     - cron: '0 10 * * *'  # 17.00 WIB
-    - cron: '0 13 * * *'  # 20.00 WIB
+    - cron: '0 13 * * *'
+    - cron: '0 18 * * *'
+  
   workflow_dispatch:
 permissions:
   contents: write
