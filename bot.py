@@ -29,6 +29,9 @@ FOOTER = "\n\n— IDR Watch 🇮🇩"
 ON_API_FAIL = "skip"
 
 # ============================================================
+# JANGAN EDIT DI BAWAH INI KECUALI LO TAU APA YANG LO LAKUIN
+# ============================================================
+
 import os
 import json
 import time
@@ -107,54 +110,22 @@ def fetch_articles():
 def is_blacklisted(title):
     return any(bl.lower() in title.lower() for bl in BLACKLIST)
 
-def is_relevant(title, summary):
-    prompt = f"""
-Kamu kurator channel ekonomi Indonesia. Tentukan apakah berita ini cukup penting dan relevan untuk dipost ke channel.
 
+def generate_narasi(title, summary):
+    prompt = f"""
+Kamu adalah admin channel Telegram ekonomi Indonesia yang nulis dengan gaya santai, 
+kayak temen yang lagi ngasih info penting. Bukan formal, bukan kaku.
+
+Tulis narasi {NARASI_KALIMAT} kalimat tentang berita ini:
 Judul: {title}
 Ringkasan: {summary}
 
-Kriteria LAYAK:
-- Berdampak langsung ke ekonomi Indonesia atau masyarakat umum
-- Ada angka/data signifikan (kurs, inflasi, suku bunga, dll)
-- Keterkaitan global yang dampaknya nyata ke Indonesia
-
-Kriteria TIDAK LAYAK:
-- Berita daerah terlalu lokal dan tidak berdampak nasional
-- Prediksi/opini tanpa data kuat
-- Berita seremonial/rapat tanpa output jelas
-
-Jawab hanya dengan: YA atau TIDAK
-"""
-    try:
-        response = model.generate_content(prompt)
-        return response.text.strip().upper().startswith("YA")
-    except:
-        return False
-
-if not is_relevant(title, article["summary"]):
-    print(f"Skip (tidak relevan): {title}")
-    continue
-def generate_narasi(title, summary):
-    prompt = f"""
-Kamu admin channel Telegram ekonomi Indonesia. Gaya nulis: singkat, padat, langsung to the point. 
-Kayak Watcher.Guru tapi versi lokal.
-
-Berita: {title}
-Konteks: {summary}
-
-Format output WAJIB:
-[1 kalimat inti berita]
-[1 kalimat dampak/konteks global kalau ada]
-[1 kalimat "artinya buat lo" — singkat, no bullshit]
-
-Aturan keras:
-- Maksimal 3 kalimat, NO LEBIH
-- Tidak ada basa-basi, langsung inti
-- Tidak ada kata "guys", "nih", "yuk", "deh", "banget"
-- Tidak ada kalimat pembuka seperti "Jadi", "Nah", "Eh"
-- Kalau ga ada dampak global yang relevan, skip baris kedua
-- Bahasa Indonesia tapi boleh campur 1-2 kata Inggris yang udah umum
+Aturan:
+- Bahasa Indonesia santai, bukan berita formal
+- Kalau ada keterkaitan ke ekonomi global (Fed, China, dll), sebutin dampaknya ke Indonesia
+- Akhiri dengan "so what" — apa artinya buat orang biasa
+- Jangan mulai dengan "Hei" atau "Hai"
+- Jangan pakai hashtag
 """
     try:
         response = model.generate_content(prompt)
@@ -208,6 +179,10 @@ def main():
             continue
 
         if is_blacklisted(title):
+            continue
+
+        if not is_relevant(title, article["summary"]):
+            print(f"Skip (tidak relevan): {title}")
             continue
 
         narasi = generate_narasi(title, article["summary"])
