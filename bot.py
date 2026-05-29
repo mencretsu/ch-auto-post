@@ -1,5 +1,5 @@
 # ============================================================
-# KONFIGURASI
+# IDR WATCH - TELEGRAM ECONOMICS BOT (FIXED)
 # ============================================================
 
 KEYWORDS = [
@@ -52,7 +52,7 @@ import io
 import feedparser
 import requests
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 import pytz
 from PIL import Image, ImageDraw, ImageFont
 from google import genai
@@ -90,6 +90,23 @@ def clean_title(title):
     return title
 
 
+def extract_real_url_from_google_news(google_news_url):
+    """
+    Extract real article URL from Google News redirect
+    Google News format: /url?q=REAL_URL_ENCODED
+    """
+    try:
+        match = re.search(r'/url\?q=([^&]+)', google_news_url)
+        if match:
+            real_url = unquote(match.group(1))
+            print(f"✓ Real URL extracted: {real_url[:70]}...")
+            return real_url
+    except Exception as e:
+        print(f"⚠ URL extraction error: {e}")
+    
+    return google_news_url
+
+
 def fetch_articles():
     articles = []
     seen_titles = set()
@@ -110,9 +127,13 @@ def fetch_articles():
                 if title.lower() in seen_titles:
                     continue
                 seen_titles.add(title.lower())
+                
+                # EXTRACT REAL ARTICLE URL (bukan Google redirect)
+                real_url = extract_real_url_from_google_news(entry.link)
+                
                 articles.append({
                     "title": title,
-                    "url": entry.link,
+                    "url": real_url,
                     "summary": re.sub(r'<[^>]+>', '', getattr(entry, "summary", "")),
                 })
         except Exception as e:
@@ -125,12 +146,15 @@ def fetch_articles():
 def is_blacklisted(title):
     return any(bl.lower() in title.lower() for bl in BLACKLIST)
 
+
 _gemini_key_index = 0
+
 
 def get_gemini_client():
     global _gemini_key_index
     key = GEMINI_KEYS[_gemini_key_index % len(GEMINI_KEYS)]
     return genai.Client(api_key=key)
+
 
 def gemini(prompt):
     global _gemini_key_index
@@ -210,48 +234,135 @@ def fetch_article_image(article_url):
     """Extract gambar dari artikel link"""
     try:
         resp = requests.get(article_url, timeout=10, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
+        resp.raise_for_status()
         
-        # Cari og:image meta tag (paling reliable)
+        # Priority 1: og:image (paling reliable untuk news articles)
         match = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', resp.text)
         if match:
             img_url = match.group(1)
-            print(f"Found og:image: {img_url[:60]}...")
+            print(f"✓ Found og:image: {img_url[:60]}...")
             return img_url
         
-        # Fallback: cari twitter:image
+        # Priority 2: twitter:image
         match = re.search(r'<meta\s+name=["\']twitter:image["\']\s+content=["\']([^"\']+)["\']', resp.text)
         if match:
             img_url = match.group(1)
-            print(f"Found twitter:image: {img_url[:60]}...")
+            print(f"✓ Found twitter:image: {img_url[:60]}...")
             return img_url
         
-        # Fallback: cari img tag pertama yang reasonable
+        # Priority 3: article:image (untuk news articles)
+        match = re.search(r'<meta\s+property=["\']article:image["\']\s+content=["\']([^"\']+)["\']', resp.text)
+        if match:
+            img_url = match.group(1)
+            print(f"✓ Found article:image: {img_url[:60]}...")
+            return img_url
+        
+        # Priority 4: img tag dengan alt text yang masuk akal
+        img_matches = re.findall(r'<img[^>]+src=["\']([^"\']+)["\'][^>]*alt=["\']([^"\']+)["\']', resp.text)
+        for url, alt_text in img_matches:
+            if url.startswith('http') and len(alt_text) > 5 and 'logo' not in alt_text.lower():
+                print(f"✓ Found img tag: {url[:60]}...")
+                return url
+        
+        # Priority 5: standalone img tag
         img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', resp.text)
         if img_match:
             url = img_match.group(1)
             if url.startswith('http'):
-                print(f"Found img tag: {url[:60]}...")
+                print(f"✓ Found img tag (fallback): {url[:60]}...")
                 return url
         
-        print(f"No image found in article")
+        print(f"✗ No image found in article")
         return None
+        
     except Exception as e:
-        print(f"Article image extraction error: {e}")
+        print(f"✗ Article image extraction error: {e}")
+        return None
+
+
+def create_placeholder_image(title, watermark_text="@idrwatch"):
+    """Create placeholder image kalau artikel ga punya gambar"""
+    try:
+        # Buat image 1200x630 dengan gradient background
+        img = Image.new("RGB", (1200, 630), color=(33, 150, 243))
+        draw = ImageDraw.Draw(img)
+        
+        # Overlay warna
+        overlay = Image.new("RGBA", img.size, (0, 100, 200, 80))
+        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+        
+        # Font
+        try:
+            title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
+            watermark_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
+        except:
+            title_font = ImageFont.load_default()
+            watermark_font = ImageFont.load_default()
+        
+        # Wrap text title
+        words = title.split()
+        lines = []
+        current_line = []
+        
+        for word in words:
+            current_line.append(word)
+            test_line = " ".join(current_line)
+            bbox = draw.textbbox((0, 0), test_line, font=title_font)
+            if bbox[2] - bbox[0] > 1100:
+                lines.append(" ".join(current_line[:-1]))
+                current_line = [word]
+        
+        if current_line:
+            lines.append(" ".join(current_line))
+        
+        # Draw title (max 3 lines)
+        lines = lines[:3]
+        total_height = len(lines) * 60
+        y_offset = (630 - total_height) // 2
+        
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=title_font)
+            text_w = bbox[2] - bbox[0]
+            x = (1200 - text_w) // 2
+            draw.text((x, y_offset), line, font=title_font, fill=(255, 255, 255))
+            y_offset += 70
+        
+        # Draw watermark at bottom
+        draw = ImageDraw.Draw(img)
+        bbox = draw.textbbox((0, 0), watermark_text, font=watermark_font)
+        text_w = bbox[2] - bbox[0]
+        x = 1200 - text_w - 20
+        y = 630 - 45
+        draw.text((x, y), watermark_text, font=watermark_font, fill=(255, 255, 255))
+        
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        buf.seek(0)
+        print(f"✓ Placeholder image created")
+        return buf
+        
+    except Exception as e:
+        print(f"✗ Placeholder creation error: {e}")
         return None
 
 
 def add_watermark(image_url, watermark_text="@idrwatch"):
+    """Resize image dan add watermark"""
     if not image_url:
         return None
     
     try:
-        resp = requests.get(image_url, timeout=10)
+        resp = requests.get(image_url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
+        resp.raise_for_status()
+        
         img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
         img = img.resize((1200, 630), Image.LANCZOS)
 
-        # Overlay gelap di bawah
+        # Overlay gelap di bawah untuk readability
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
         draw.rectangle(
@@ -277,14 +388,16 @@ def add_watermark(image_url, watermark_text="@idrwatch"):
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=85)
         buf.seek(0)
+        print(f"✓ Watermark added")
         return buf
 
     except Exception as e:
-        print(f"Watermark error: {e}")
+        print(f"✗ Watermark error: {e}")
         return None
 
 
 def send_telegram(msg, image_buf=None):
+    """Send message to Telegram channel"""
     if image_buf:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         try:
@@ -295,9 +408,10 @@ def send_telegram(msg, image_buf=None):
             }, files={
                 "photo": ("image.jpg", image_buf, "image/jpeg")
             }, timeout=15)
+            
             if resp.status_code == 429:
                 retry_after = resp.json().get("parameters", {}).get("retry_after", 10)
-                print(f"Telegram rate limit, tunggu {retry_after}s...")
+                print(f"⚠ Telegram rate limit, tunggu {retry_after}s...")
                 time.sleep(retry_after)
                 image_buf.seek(0)
                 requests.post(url, data={
@@ -307,9 +421,13 @@ def send_telegram(msg, image_buf=None):
                 }, files={
                     "photo": ("image.jpg", image_buf, "image/jpeg")
                 }, timeout=15)
+            
+            print(f"✓ Telegram photo sent")
+            return True
+            
         except Exception as e:
-            print(f"Telegram photo error: {e}, fallback to text-only")
-            send_telegram(msg)
+            print(f"✗ Telegram photo error: {e}, fallback to text-only")
+            return send_telegram(msg)
     else:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         try:
@@ -318,53 +436,68 @@ def send_telegram(msg, image_buf=None):
                 "text": msg,
                 "parse_mode": "HTML"
             }, timeout=10)
+            print(f"✓ Telegram text sent")
+            return True
         except Exception as e:
-            print(f"Telegram error: {e}")
+            print(f"✗ Telegram error: {e}")
+            return False
 
 
 def main():
     now = datetime.now(WIB)
+    print(f"\n{'='*60}")
     print(f"[{now.strftime('%d %b %Y %H:%M')} WIB] Bot jalan...")
+    print(f"{'='*60}\n")
 
     posted_data = load_posted()
     posted_urls = set(posted_data["posted"])
 
     articles = fetch_articles()
+    print(f"📰 Found {len(articles)} articles\n")
+    
     count = 0
 
-    for article in articles:
+    for idx, article in enumerate(articles, 1):
         if count >= MAX_ARTICLES_PER_RUN:
             break
 
         url = article["url"]
         title = article["title"]
+        
+        print(f"[{idx}] Processing: {title[:70]}...")
 
         if url in posted_urls:
+            print(f"    ⊘ Already posted\n")
             continue
 
         if is_blacklisted(title):
+            print(f"    ⊘ Blacklisted\n")
             continue
 
         if not is_relevant(title, article["summary"]):
-            print(f"Skip (tidak relevan): {title}")
+            print(f"    ⊘ Not relevant\n")
             continue
 
         narasi = generate_narasi(title, article["summary"])
 
         if narasi is None:
             if ON_API_FAIL == "skip":
+                print(f"    ⊘ Gemini API failed\n")
                 continue
 
         msg = f"🏦 <b>{title}</b>\n\n{narasi}{FOOTER}"
 
         # EXTRACT GAMBAR DARI ARTIKEL
         image_url = fetch_article_image(url)
-        print(f"Article image URL: {image_url}")
         image_buf = add_watermark(image_url) if image_url else None
-        print(f"Image buf: {'ada' if image_buf else 'kosong'}")
+        
+        # FALLBACK KE PLACEHOLDER KALAU GAMBAR KOSONG
+        if not image_buf:
+            print(f"    → Creating placeholder image...")
+            image_buf = create_placeholder_image(title)
 
         send_telegram(msg, image_buf)
-        print(f"Posted: {title}")
+        print(f"    ✓ Posted!\n")
 
         posted_urls.add(url)
         posted_data["posted"] = list(posted_urls)
@@ -374,7 +507,9 @@ def main():
             time.sleep(2)
 
     save_posted(posted_data)
-    print(f"Selesai. {count} artikel dipost.")
+    print(f"{'='*60}")
+    print(f"✓ Selesai. {count} artikel dipost.")
+    print(f"{'='*60}\n")
 
 
 if __name__ == "__main__":
