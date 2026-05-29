@@ -1,7 +1,6 @@
 # ============================================================
-# IDR WATCH - ALTERNATIF IMAGE SOLUTIONS (FIXED)
+# IDR WATCH - SMART CARD IMAGE GENERATOR
 # ============================================================
-# User cape dengan API eksternal, pakai solusi lokal & scraping
 import os
 import json
 import time
@@ -10,11 +9,12 @@ import io
 import feedparser
 import requests
 from datetime import datetime
-from urllib.parse import urlparse, unquote
+from urllib.parse import unquote
 import pytz
 from PIL import Image, ImageDraw, ImageFont
 from google import genai
 import random
+import math
 
 KEYWORDS = [
     "rupiah", "USD/IDR", "BI rate", "Bank Indonesia", "inflasi Indonesia", "IHSG",
@@ -42,484 +42,593 @@ GEMINI_KEYS = [
 ]
 
 # ============================================================
-# OPTION 1: SCRAPE DARI BERITA LOKAL INDONESIA
+# FONT LOADER
 # ============================================================
-INDONESIAN_NEWS_SOURCES = {
-    "detik": {
-        "url": "https://www.detik.com/berita",
-        "og_image": True,
-        "priority": 1
-    },
-    "kompas": {
-        "url": "https://www.kompas.com/",
-        "og_image": True,
-        "priority": 2
-    },
-    "cnnid": {
-        "url": "https://www.cnnindonesia.com/",
-        "og_image": True,
-        "priority": 1
-    },
-    "bisnis": {
-        "url": "https://bisnis.com.au/",
-        "og_image": True,
-        "priority": 2
-    }
+
+FONT_PATHS = {
+    "bold":    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "regular": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "mono":    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
 }
 
-# ============================================================
-# IMPROVED IMAGE VALIDATION (FILTER KETAT)
-# ============================================================
-
-def is_valid_image_url(image_url):
-    """
-    Validate image URL dengan filter KETAT
-    Prevent banner, asset, logo, dll yang bukan artikel image
-    """
-    if not image_url or not image_url.startswith('http'):
-        return False
-    
-    url_lower = image_url.lower()
-    
-    # ❌ BLACKLIST DOMAIN
-    blocked_domains = [
-        'google', 'gstatic', 'ggpht', 'doubleclick',
-        'googleusercontent', 'facebook.com', 'instagram.com'
-    ]
-    
-    # ❌ BLACKLIST PATH PATTERNS (banner, asset, dll)
-    blocked_paths = [
-        'logo',              # Logo
-        'icon',              # Icon
-        'favicon',           # Browser icon
-        'avatar',            # User avatar
-        'ads',               # Ads
-        '1x1',               # Tracking pixel
-        'banner',            # ← Banner ads/promotional
-        '/data/',            # ← Data folder (biasanya asset like Kompas)
-        'asset',             # ← Asset folder
-        'static/',           # ← Static folder
-        'jmd',               # ← Kompas JMD template  
-        'template',          # ← Template images
-        'placeholder',       # ← Placeholder
-        'stock/',            # ← Stock images generic
-        'default',           # ← Default images
-        'fallback',          # ← Fallback
-        'social-share',      # ← Social share buttons
-        'btn-',              # ← Button images
-        'button-',
-        'bg-',               # ← Background pattern
-        'x128', 'x64', 'x32', # ← Small dimensions
-        '-thumb',            # ← Thumbnail
-        'thumbnail',
-        '_sm', '_small',     # ← Small size variant
-        'generic',
-        'blank',
-        'noimage',
-        'no-image',
-        'spacer',
-        'pixel',
-        'tracker',
-        'v2/image',          # ← Generic image API
-        'images/generic',
-    ]
-    
-    # Check domains
-    for domain in blocked_domains:
-        if domain in url_lower:
-            return False
-    
-    # Check paths
-    for path in blocked_paths:
-        if path in url_lower:
-            print(f"      ⊘ Blocked path: {path}")
-            return False
-    
-    # ✓ Minimal filename length check
-    parsed = urlparse(image_url)
-    filename = parsed.path.split('/')[-1]
-    
-    if len(filename) < 8:
-        print(f"      ⊘ Filename terlalu pendek: {filename}")
-        return False
-    
-    # ✓ Heuristic: Skip suspicious pattern
-    suspicious_patterns = [
-        'widget',
-        'component',
-        'module',
-        'helper',
-    ]
-    
-    for pattern in suspicious_patterns:
-        if pattern in url_lower:
-            return False
-    
-    return True
-
-
-def validate_image_before_use(image_buf):
-    """
-    Validate actual image file sebelum digunakan
-    Untuk extra safety: check dimensi, aspect ratio
-    """
+def load_font(style="bold", size=48):
     try:
-        image_buf.seek(0)
-        img = Image.open(image_buf)
-        
-        width, height = img.size
-        
-        # Check ukuran minimal
-        if width < 400 or height < 300:
-            print(f"      ⊘ Image terlalu kecil: {width}x{height}")
-            return False
-        
-        # Aspect ratio check (banner biasanya extreme)
-        ratio = width / height
-        
-        if ratio > 4 or ratio < 0.25:
-            print(f"      ⊘ Aspect ratio suspicious: {ratio:.2f}")
-            return False
-        
-        print(f"      ✓ Image valid: {width}x{height}")
-        return True
-        
-    except Exception as e:
-        print(f"      ⚠ Image validation error: {e}")
-        return False
-
-# ============================================================
-# SCRAPE DARI BERITA LOKAL INDONESIA
-# ============================================================
-
-def scrape_local_news_image(keyword):
-    """
-    Scrape image dari berita lokal Indonesia
-    Lebih reliable daripada API eksternal karena:
-    - Struktur HTML konsisten
-    - og:image selalu ada
-    - Tidak perlu API key
-    """
-    try:
-        # Search di Detik (paling reliable)
-        search_url = f"https://www.detik.com/search/searchall?query={requests.utils.quote(keyword)}"
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        
-        resp = requests.get(search_url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        
-        # Cari og:image dari first search result
-        match = re.search(
-            r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']',
-            resp.text
-        )
-        
-        if match:
-            img_url = match.group(1)
-            if is_valid_image_url(img_url):
-                try:
-                    img_resp = requests.get(img_url, timeout=10, headers=headers)
-                    if validate_image_before_use(io.BytesIO(img_resp.content)):
-                        print(f"      ✓ Scraped from Detik: {img_url[:60]}...")
-                        return img_url
-                except:
-                    pass
-        
-        # Fallback ke Kompas
-        search_url = f"https://search.kompas.com/search?q={requests.utils.quote(keyword)}&sort=latest"
-        resp = requests.get(search_url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        
-        match = re.search(
-            r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']',
-            resp.text
-        )
-        
-        if match:
-            img_url = match.group(1)
-            if is_valid_image_url(img_url):
-                try:
-                    img_resp = requests.get(img_url, timeout=10, headers=headers)
-                    if validate_image_before_use(io.BytesIO(img_resp.content)):
-                        print(f"      ✓ Scraped from Kompas: {img_url[:60]}...")
-                        return img_url
-                except:
-                    pass
-        
-        return None
-        
-    except Exception as e:
-        print(f"      ⚠ Scrape local news error: {e}")
-        return None
-
-# ============================================================
-# OPTION 2: GENERATE IMAGE PAKAI GEMINI (SIMPLE)
-# ============================================================
-
-_gemini_key_index = 0
-
-def get_gemini_client():
-    global _gemini_key_index
-    key = GEMINI_KEYS[_gemini_key_index % len(GEMINI_KEYS)]
-    return genai.Client(api_key=key)
-
-def gemini(prompt):
-    global _gemini_key_index
-    for i in range(len(GEMINI_KEYS)):
-        try:
-            client = get_gemini_client()
-            response = client.models.generate_content(
-                model="gemini-2.5-flash-lite",
-                contents=prompt
-            )
-            return response.text.strip()
-        except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                print(f"      Key {_gemini_key_index + 1} kena limit...")
-                _gemini_key_index += 1
-                continue
-            raise e
-    return None
-
-def generate_image_with_gemini(title, summary):
-    """
-    Generate image description, nanti bisa pakai untuk:
-    1. Request ke Gemini ImageGen (kalau available)
-    2. Atau maintain detailed fallback image dengan info ini
-    
-    For now: return description untuk fallback image
-    """
-    try:
-        prompt = f"""
-Berdasarkan berita ini, jelaskan visual yang cocok untuk dipajang:
-Judul: {title}
-Summary: {summary}
-Format: HANYA DESKRIPSI VISUAL (misal: "grafik kenaikan rupiah dengan warna merah")
-Jawab SINGKAT hanya 1 kalimat visual yang bisa di-represent dengan warna/bentuk/emoji
-"""
-        result = gemini(prompt)
-        return result
+        return ImageFont.truetype(FONT_PATHS.get(style, FONT_PATHS["bold"]), size)
     except:
-        return None
+        return ImageFont.load_default()
 
 # ============================================================
-# OPTION 3: CREATE STYLISH PLACEHOLDER (NO EXTERNAL API)
+# CONTEXT DETECTOR
 # ============================================================
 
-def create_stylish_placeholder(title, keyword="", watermark_text="@idrwatch"):
-    """
-    Placeholder yang lebih menarik:
-    - Gradient background
-    - Emoji related to keyword
-    - Better typography
-    - Ala Watcher.Guru style
-    """
-    try:
-        # Emoji mapping untuk keywords
-        emoji_map = {
-            "rupiah": "💱", "USD": "$", "BI": "🏛️", "inflasi": "📈",
-            "IHSG": "📊", "Fed": "🇺🇸", "bitcoin": "₿", "emas": "🏆",
-            "minyak": "🛢️", "nikel": "⚙️", "ekonomi": "💼", "rate": "📉"
-        }
-        
-        # Find matching emoji
-        emoji = "📰"
-        for key, emj in emoji_map.items():
-            if key.lower() in title.lower() or key.lower() in keyword.lower():
-                emoji = emj
-                break
-        
-        # Create image 1200x630
-        img = Image.new("RGB", (1200, 630))
-        
-        # Gradient background (dynamic berdasarkan keyword)
-        pixels = img.load()
-        if "naik" in title.lower() or "positif" in title.lower():
-            # Green gradient (bullish)
-            color_start = (76, 175, 80)
-            color_end = (27, 94, 32)
-        elif "turun" in title.lower() or "negatif" in title.lower():
-            # Red gradient (bearish)
-            color_start = (244, 67, 54)
-            color_end = (183, 28, 28)
+def detect_context(title, keyword):
+    """Return (sentiment, topic, accent_color, bg_colors, icon)"""
+    t = (title + keyword).lower()
+
+    # --- Sentiment ---
+    bullish_words = ["naik", "menguat", "positif", "surplus", "tumbuh", "rebound", "rally", "record"]
+    bearish_words = ["turun", "melemah", "negatif", "defisit", "anjlok", "crash", "resesi", "jatuh"]
+
+    sentiment = "neutral"
+    for w in bullish_words:
+        if w in t:
+            sentiment = "bullish"
+            break
+    for w in bearish_words:
+        if w in t:
+            sentiment = "bearish"
+            break
+
+    # --- Topic + icon ---
+    topic_map = [
+        (["bitcoin", "ethereum", "kripto", "btc", "eth"],        "crypto",   "₿"),
+        (["emas", "gold"],                                         "gold",     "◈"),
+        (["minyak", "oil", "crude"],                              "oil",      "⬡"),
+        (["ihsg", "saham", "bursa", "idx"],                       "equity",   "▲"),
+        (["rupiah", "usd/idr", "dolar", "kurs"],                  "fx",       "◎"),
+        (["bi rate", "bank indonesia", "suku bunga"],             "central",  "▣"),
+        (["inflasi", "cpi", "deflasi"],                           "macro",    "↕"),
+        (["fed", "fomc", "treasury", "yield"],                    "fed",      "★"),
+        (["china", "yuan", "cny"],                                "china",    "◆"),
+        (["nikel", "batu bara", "komoditas", "commodity"],        "commodity","◇"),
+    ]
+    topic, icon = "general", "◉"
+    for keywords_list, tpc, icn in topic_map:
+        if any(k in t for k in keywords_list):
+            topic, icon = tpc, icn
+            break
+
+    # --- Color palette per topic + sentiment override ---
+    palettes = {
+        "crypto":    {"bg": [(15, 10, 35), (40, 20, 80)],    "accent": (138, 92, 255)},
+        "gold":      {"bg": [(30, 22, 8),  (70, 50, 10)],    "accent": (255, 200, 50)},
+        "oil":       {"bg": [(20, 18, 15), (50, 40, 25)],    "accent": (255, 140, 30)},
+        "equity":    {"bg": [(8, 25, 18),  (15, 55, 35)],    "accent": (50, 230, 140)},
+        "fx":        {"bg": [(10, 20, 40), (20, 45, 80)],    "accent": (60, 160, 255)},
+        "central":   {"bg": [(20, 20, 30), (35, 35, 60)],    "accent": (180, 180, 255)},
+        "macro":     {"bg": [(25, 15, 25), (55, 30, 55)],    "accent": (210, 100, 220)},
+        "fed":       {"bg": [(5, 15, 5),   (10, 40, 10)],    "accent": (80, 200, 80)},
+        "china":     {"bg": [(35, 5, 5),   (80, 15, 15)],    "accent": (255, 60, 60)},
+        "commodity": {"bg": [(20, 20, 15), (50, 48, 30)],    "accent": (200, 190, 80)},
+        "general":   {"bg": [(15, 15, 25), (35, 35, 55)],    "accent": (100, 180, 255)},
+    }
+
+    palette = palettes.get(topic, palettes["general"])
+
+    # Tint accent berdasarkan sentiment
+    r, g, b = palette["accent"]
+    if sentiment == "bullish":
+        accent = (min(r, 80), max(g, 200), min(b, 120))
+    elif sentiment == "bearish":
+        accent = (max(r, 220), min(g, 80), min(b, 80))
+    else:
+        accent = palette["accent"]
+
+    return sentiment, topic, accent, palette["bg"], icon
+
+# ============================================================
+# LAYOUT STYLES
+# ============================================================
+
+def draw_gradient_bg(pixels, w, h, c1, c2):
+    """Diagonal gradient dari kiri-atas ke kanan-bawah"""
+    for y in range(h):
+        for x in range(w):
+            t = (x / w * 0.4 + y / h * 0.6)
+            r = int(c1[0] + (c2[0] - c1[0]) * t)
+            g = int(c1[1] + (c2[1] - c1[1]) * t)
+            b = int(c1[2] + (c2[2] - c1[2]) * t)
+            pixels[x, y] = (r, g, b)
+
+def draw_noise_overlay(draw, w, h, alpha=18):
+    """Subtle noise texture biar gak flat"""
+    rng = random.Random(42)
+    for _ in range(w * h // 8):
+        x = rng.randint(0, w - 1)
+        y = rng.randint(0, h - 1)
+        v = rng.randint(0, 255)
+        draw.point((x, y), fill=(v, v, v))
+
+def draw_grid_lines(draw, w, h, color):
+    """Subtle grid — cocok buat finance/chart vibe"""
+    r, g, b = color
+    line_color = (min(r + 20, 255), min(g + 20, 255), min(b + 20, 255))
+    for x in range(0, w, 80):
+        draw.line([(x, 0), (x, h)], fill=(*line_color, 15), width=1)
+    for y in range(0, h, 80):
+        draw.line([(0, y), (w, y)], fill=(*line_color, 15), width=1)
+
+def draw_diagonal_stripes(draw, w, h, accent):
+    """Diagonal accent stripes di corner"""
+    r, g, b = accent
+    stripe_color = (r, g, b, 20)
+    for i in range(-h, w + h, 60):
+        draw.line([(i, 0), (i + h, h)], fill=stripe_color, width=25)
+
+def draw_circle_accent(draw, w, h, accent, pos="br"):
+    """Large blurred circle sebagai accent element"""
+    r, g, b = accent
+    if pos == "br":
+        cx, cy = w - 80, h - 60
+    elif pos == "tl":
+        cx, cy = 80, 60
+    else:
+        cx, cy = w // 2, h // 2
+
+    # Simulate blur dengan multiple circles menurun opacity
+    for radius, opacity in [(300, 8), (220, 12), (150, 18), (90, 22), (50, 28)]:
+        bbox = [cx - radius, cy - radius, cx + radius, cy + radius]
+        draw.ellipse(bbox, fill=(r, g, b, opacity))
+
+def draw_corner_bracket(draw, w, h, accent, thickness=3):
+    """Corner brackets — editorial style"""
+    size = 50
+    r, g, b = accent
+    color = (r, g, b, 200)
+    pad = 24
+
+    # Top-left
+    draw.rectangle([pad, pad, pad + size, pad + thickness], fill=color)
+    draw.rectangle([pad, pad, pad + thickness, pad + size], fill=color)
+
+    # Top-right
+    draw.rectangle([w - pad - size, pad, w - pad, pad + thickness], fill=color)
+    draw.rectangle([w - pad - thickness, pad, w - pad, pad + size], fill=color)
+
+    # Bottom-left
+    draw.rectangle([pad, h - pad - thickness, pad + size, h - pad], fill=color)
+    draw.rectangle([pad, h - pad - size, pad + thickness, h - pad], fill=color)
+
+    # Bottom-right
+    draw.rectangle([w - pad - size, h - pad - thickness, w - pad, h - pad], fill=color)
+    draw.rectangle([w - pad - thickness, h - pad - size, w - pad, h - pad], fill=color)
+
+def draw_bar_chart_deco(draw, w, h, accent, sentiment):
+    """Mini fake bar chart di background — cocok finance"""
+    r, g, b = accent
+    bar_w = 28
+    gap = 14
+    n_bars = 10
+    max_bh = 140
+    base_y = h - 90
+    start_x = w - (bar_w + gap) * n_bars - 40
+
+    rng = random.Random(77)
+    for i in range(n_bars):
+        bh = rng.randint(30, max_bh)
+        x0 = start_x + i * (bar_w + gap)
+        x1 = x0 + bar_w
+        y0 = base_y - bh
+        y1 = base_y
+
+        # Last bar = highlight
+        if i == n_bars - 1:
+            color = (r, g, b, 160)
         else:
-            # Blue gradient (neutral)
-            color_start = (33, 150, 243)
-            color_end = (13, 71, 161)
-        
-        # Apply gradient
-        for y in range(630):
-            ratio = y / 630
-            r = int(color_start[0] * (1 - ratio) + color_end[0] * ratio)
-            g = int(color_start[1] * (1 - ratio) + color_end[1] * ratio)
-            b = int(color_start[2] * (1 - ratio) + color_end[2] * ratio)
-            for x in range(1200):
-                pixels[x, y] = (r, g, b)
-        
-        draw = ImageDraw.Draw(img)
-        
-        # Load fonts
-        try:
-            title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 56)
-            emoji_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 120)
-            watermark_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
-        except:
-            title_font = ImageFont.load_default()
-            emoji_font = ImageFont.load_default()
-            watermark_font = ImageFont.load_default()
-        
-        # Draw emoji di tengah atas
-        emoji_bbox = draw.textbbox((0, 0), emoji, font=emoji_font)
-        emoji_w = emoji_bbox[2] - emoji_bbox[0]
-        emoji_x = (1200 - emoji_w) // 2
-        draw.text((emoji_x, 100), emoji, font=emoji_font, fill=(255, 255, 255))
-        
-        # Wrap title
-        words = title.split()
-        lines = []
-        current_line = []
-        
-        for word in words:
-            current_line.append(word)
-            test_line = " ".join(current_line)
-            bbox = draw.textbbox((0, 0), test_line, font=title_font)
-            if bbox[2] - bbox[0] > 1100:
-                lines.append(" ".join(current_line[:-1]))
-                current_line = [word]
-        
-        if current_line:
-            lines.append(" ".join(current_line))
-        
-        lines = lines[:3]  # Max 3 lines
-        
-        # Draw title
-        y_offset = 280
-        for line in lines:
-            bbox = draw.textbbox((0, 0), line, font=title_font)
-            text_w = bbox[2] - bbox[0]
-            x = (1200 - text_w) // 2
-            draw.text((x, y_offset), line, font=title_font, fill=(255, 255, 255))
-            y_offset += 80
-        
-        # Draw watermark
-        bbox = draw.textbbox((0, 0), watermark_text, font=watermark_font)
-        text_w = bbox[2] - bbox[0]
-        x = 1200 - text_w - 20
-        y = 630 - 45
-        draw.text((x, y), watermark_text, font=watermark_font, fill=(255, 255, 255))
-        
-        # Save to buffer
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
-        buf.seek(0)
-        print(f"      ✓ Stylish placeholder created ({emoji})")
-        return buf
-        
-    except Exception as e:
-        print(f"      ✗ Placeholder creation error: {e}")
-        return None
+            color = (r, g, b, 55)
+
+        draw.rectangle([x0, y0, x1, y1], fill=color)
+
+def draw_sine_wave(draw, w, h, accent):
+    """Subtle sine wave line di background"""
+    r, g, b = accent
+    points = []
+    for x in range(0, w + 1, 4):
+        y = h // 2 + int(60 * math.sin(x / 80))
+        points.append((x, y))
+
+    for i in range(len(points) - 1):
+        draw.line([points[i], points[i + 1]], fill=(r, g, b, 30), width=2)
+
+def draw_hexagon_pattern(draw, w, h, accent):
+    """Honeycomb pattern di background sudut"""
+    r, g, b = accent
+    size = 35
+    for row in range(8):
+        for col in range(12):
+            cx = col * size * 1.8 + (size if row % 2 else 0) - 100
+            cy = row * size * 1.55 - 80
+            pts = [
+                (cx + size * math.cos(math.radians(60 * i - 30)),
+                 cy + size * math.sin(math.radians(60 * i - 30)))
+                for i in range(6)
+            ]
+            draw.polygon(pts, outline=(r, g, b, 22), fill=None)
+
+def wrap_text(draw, text, font, max_width):
+    words = text.split()
+    lines = []
+    current = []
+    for word in words:
+        current.append(word)
+        bbox = draw.textbbox((0, 0), " ".join(current), font=font)
+        if bbox[2] - bbox[0] > max_width:
+            if len(current) > 1:
+                lines.append(" ".join(current[:-1]))
+                current = [word]
+            else:
+                lines.append(word)
+                current = []
+    if current:
+        lines.append(" ".join(current))
+    return lines[:3]
+
+def draw_text_shadow(draw, pos, text, font, color, shadow_offset=3, shadow_alpha=60):
+    r, g, b = color
+    sx, sy = pos[0] + shadow_offset, pos[1] + shadow_offset
+    draw.text((sx, sy), text, font=font, fill=(0, 0, 0))
+    draw.text(pos, text, font=font, fill=color)
 
 # ============================================================
-# ADD WATERMARK TO IMAGE
+# STYLE VARIANTS
 # ============================================================
 
-def add_watermark(image_url, watermark_text="@idrwatch"):
-    """Resize dan add watermark ke image"""
+STYLE_POOL = ["editorial", "terminal", "minimal", "bold_type", "dashboard"]
+
+def pick_style(topic, sentiment):
+    """
+    Topic + sentiment → style yang cocok.
+    Tapi masih ada randomness biar gak monoton.
+    """
+    preferred = {
+        "crypto":    ["terminal", "bold_type"],
+        "gold":      ["editorial", "minimal"],
+        "oil":       ["dashboard", "bold_type"],
+        "equity":    ["dashboard", "editorial"],
+        "fx":        ["terminal", "dashboard"],
+        "central":   ["minimal", "editorial"],
+        "macro":     ["editorial", "minimal"],
+        "fed":       ["terminal", "bold_type"],
+        "china":     ["bold_type", "editorial"],
+        "commodity": ["dashboard", "minimal"],
+        "general":   STYLE_POOL,
+    }
+    pool = preferred.get(topic, STYLE_POOL)
+    return random.choice(pool)
+
+def style_editorial(img, draw, w, h, title, topic, accent, bg_colors, icon, sentiment, watermark):
+    """Magazine editorial — clean, bracket corners, big icon left, title right"""
+    # Background
+    pixels = img.load()
+    draw_gradient_bg(pixels, w, h, bg_colors[0], bg_colors[1])
+
+    # Noise
+    draw_noise_overlay(draw, w, h)
+
+    # Hexagon pattern faint
+    draw_hexagon_pattern(draw, w, h, accent)
+
+    # Corner brackets
+    draw_corner_bracket(draw, w, h, accent)
+
+    # Big icon left panel
+    r, g, b = accent
+    panel_w = 340
+    draw.rectangle([0, 0, panel_w, h], fill=(*bg_colors[0], 255))
+    draw.line([(panel_w, 0), (panel_w, h)], fill=(*accent, 120), width=2)
+
+    icon_font = load_font("bold", 140)
+    ib = draw.textbbox((0, 0), icon, font=icon_font)
+    ix = (panel_w - (ib[2] - ib[0])) // 2
+    iy = (h - (ib[3] - ib[1])) // 2
+    draw.text((ix + 3, iy + 3), icon, font=icon_font, fill=(0, 0, 0))
+    draw.text((ix, iy), icon, font=icon_font, fill=accent)
+
+    # Topic label
+    label_font = load_font("regular", 22)
+    topic_label = topic.upper()
+    draw.text((panel_w + 36, 50), topic_label, font=label_font, fill=(*accent, 200))
+
+    # Accent line
+    draw.rectangle([panel_w + 36, 82, panel_w + 36 + 60, 85], fill=accent)
+
+    # Title
+    title_font = load_font("bold", 54)
+    lines = wrap_text(draw, title, title_font, w - panel_w - 72)
+    ty = 110
+    for line in lines:
+        draw_text_shadow(draw, (panel_w + 36, ty), line, title_font, (240, 240, 240))
+        ty += 70
+
+    # Sentiment tag
+    sentiment_labels = {"bullish": "▲ POSITIF", "bearish": "▼ NEGATIF", "neutral": "● NETRAL"}
+    sent_text = sentiment_labels.get(sentiment, "● NETRAL")
+    sent_font = load_font("bold", 22)
+    draw.text((panel_w + 36, h - 80), sent_text, font=sent_font, fill=accent)
+
+    # Watermark
+    wm_font = load_font("regular", 22)
+    wb = draw.textbbox((0, 0), watermark, font=wm_font)
+    draw.text((w - (wb[2] - wb[0]) - 30, h - 50), watermark, font=wm_font, fill=(*accent, 160))
+
+
+def style_terminal(img, draw, w, h, title, topic, accent, bg_colors, icon, sentiment, watermark):
+    """Terminal/hacker vibe — dark, monospace, scanlines, code aesthetic"""
+    pixels = img.load()
+
+    # Very dark bg
+    dark1 = (5, 12, 5)
+    dark2 = (10, 22, 10)
+    if topic in ["crypto", "fed"]:
+        dark1, dark2 = (5, 5, 18), (8, 8, 35)
+    elif topic == "china":
+        dark1, dark2 = (18, 5, 5), (35, 8, 8)
+
+    draw_gradient_bg(pixels, w, h, dark1, dark2)
+
+    # Scanlines
+    r, g, b = accent
+    for y in range(0, h, 4):
+        draw.line([(0, y), (w, y)], fill=(r, g, b, 6), width=1)
+
+    # Grid
+    draw_grid_lines(draw, w, h, dark2)
+
+    # Top bar
+    draw.rectangle([0, 0, w, 55], fill=(*accent, 220))
+    bar_font = load_font("mono", 24)
+    bar_text = f"  ◉ IDR-WATCH  //  {topic.upper()}  //  BREAKING"
+    draw.text((10, 14), bar_text, font=bar_font, fill=(0, 0, 0))
+
+    # Prompt-style prefix
+    prompt_font = load_font("mono", 28)
+    draw.text((40, 90), "$ ./alert --topic", font=prompt_font, fill=(*accent, 160))
+
+    # Icon
+    icon_font = load_font("mono", 100)
+    ib = draw.textbbox((0, 0), icon, font=icon_font)
+    draw.text((w - (ib[2] - ib[0]) - 50, 80), icon, font=icon_font, fill=(*accent, 50))
+
+    # Title
+    title_font = load_font("mono", 46)
+    lines = wrap_text(draw, title, title_font, w - 100)
+    ty = 150
+    for line in lines:
+        draw.text((40, ty), line, font=title_font, fill=(220, 220, 220))
+        ty += 62
+
+    # Blinking cursor sim
+    draw.rectangle([42, ty + 8, 42 + 22, ty + 38], fill=(*accent, 200))
+
+    # Bottom status
+    status_labels = {"bullish": "STATUS: BULLISH ▲", "bearish": "STATUS: BEARISH ▼", "neutral": "STATUS: WATCH ●"}
+    status_font = load_font("mono", 22)
+    draw.text((40, h - 55), status_labels.get(sentiment, "STATUS: WATCH ●"), font=status_font, fill=(*accent, 200))
+
+    # Watermark
+    wb = draw.textbbox((0, 0), watermark, font=status_font)
+    draw.text((w - (wb[2] - wb[0]) - 30, h - 55), watermark, font=status_font, fill=(*accent, 140))
+
+
+def style_minimal(img, draw, w, h, title, topic, accent, bg_colors, icon, sentiment, watermark):
+    """Clean minimal — lotsa whitespace, single strong accent line, refined"""
+    pixels = img.load()
+
+    # Near-white or near-black based on sentiment
+    if sentiment == "bearish":
+        base = (12, 12, 15)
+        text_color = (230, 230, 230)
+    else:
+        base = (245, 244, 240)
+        text_color = (20, 20, 25)
+
+    for y in range(h):
+        for x in range(w):
+            pixels[x, y] = base
+
+    # Thick left accent bar
+    r, g, b = accent
+    draw.rectangle([0, 0, 12, h], fill=accent)
+
+    # Large background icon (ghost)
+    ghost_font = load_font("bold", 280)
+    gb = draw.textbbox((0, 0), icon, font=ghost_font)
+    gx = w - (gb[2] - gb[0]) - 20
+    gy = (h - (gb[3] - gb[1])) // 2 - 20
+    draw.text((gx, gy), icon, font=ghost_font, fill=(*accent, 18))
+
+    # Topic chip
+    chip_font = load_font("bold", 20)
+    chip_text = f"  {topic.upper()}  "
+    cb = draw.textbbox((0, 0), chip_text, font=chip_font)
+    draw.rectangle([40, 48, 40 + (cb[2] - cb[0]) + 4, 48 + (cb[3] - cb[1]) + 6], fill=accent)
+    draw.text((42, 50), chip_text, font=chip_font, fill=(0, 0, 0))
+
+    # Title
+    title_font = load_font("bold", 58)
+    lines = wrap_text(draw, title, title_font, w - 120)
+    ty = 120
+    for line in lines:
+        draw.text((40, ty), line, font=title_font, fill=text_color)
+        ty += 76
+
+    # Thin divider line
+    draw.rectangle([40, ty + 10, 300, ty + 13], fill=(*accent, 200))
+
+    # Sentiment
+    sent_labels = {"bullish": "▲ Positif", "bearish": "▼ Negatif", "neutral": "● Netral"}
+    sent_font = load_font("regular", 24)
+    draw.text((40, ty + 28), sent_labels.get(sentiment, "● Netral"), font=sent_font, fill=(*accent, 220))
+
+    # Watermark
+    wm_font = load_font("regular", 20)
+    wb = draw.textbbox((0, 0), watermark, font=wm_font)
+    draw.text((w - (wb[2] - wb[0]) - 30, h - 44), watermark, font=wm_font, fill=(*accent, 160))
+
+
+def style_bold_type(img, draw, w, h, title, topic, accent, bg_colors, icon, sentiment, watermark):
+    """Bold typography — giant text, kontras tinggi, stripe accent"""
+    pixels = img.load()
+
+    # Solid dark bg
+    dark = (10, 10, 12)
+    for y in range(h):
+        for x in range(w):
+            pixels[x, y] = dark
+
+    r, g, b = accent
+
+    # Diagonal stripes (very faint)
+    draw_diagonal_stripes(draw, w, h, accent)
+
+    # Big accent block top
+    draw.rectangle([0, 0, w, 18], fill=accent)
+
+    # Giant icon background watermark
+    huge_font = load_font("bold", 320)
+    hb = draw.textbbox((0, 0), icon, font=huge_font)
+    hx = (w - (hb[2] - hb[0])) // 2
+    hy = (h - (hb[3] - hb[1])) // 2
+    draw.text((hx, hy), icon, font=huge_font, fill=(r, g, b, 25))
+
+    # Accent bottom block
+    draw.rectangle([0, h - 18, w, h], fill=accent)
+
+    # Topic
+    topic_font = load_font("bold", 24)
+    draw.text((36, 36), f"— {topic.upper()} —", font=topic_font, fill=accent)
+
+    # Title — very large, bold
+    title_font = load_font("bold", 62)
+    lines = wrap_text(draw, title, title_font, w - 80)
+    ty = 100
+    for line in lines:
+        draw_text_shadow(draw, (36, ty), line, title_font, (245, 245, 245))
+        ty += 80
+
+    # Sentiment pill
+    sent_map = {"bullish": ("▲ NAIK", (30, 200, 80)), "bearish": ("▼ TURUN", (220, 50, 50)), "neutral": ("● WATCH", accent)}
+    sent_text, sent_color = sent_map.get(sentiment, ("● WATCH", accent))
+    pill_font = load_font("bold", 26)
+    pb = draw.textbbox((0, 0), f" {sent_text} ", font=pill_font)
+    pw = pb[2] - pb[0] + 20
+    ph = pb[3] - pb[1] + 12
+    draw.rounded_rectangle([36, h - 65 - ph, 36 + pw, h - 65], radius=6, fill=sent_color)
+    draw.text((46, h - 60 - (ph - 12) // 2 - 8), f" {sent_text} ", font=pill_font, fill=(255, 255, 255))
+
+    # Watermark
+    wm_font = load_font("regular", 22)
+    wb = draw.textbbox((0, 0), watermark, font=wm_font)
+    draw.text((w - (wb[2] - wb[0]) - 30, h - 55), watermark, font=wm_font, fill=(*accent, 150))
+
+
+def style_dashboard(img, draw, w, h, title, topic, accent, bg_colors, icon, sentiment, watermark):
+    """Dashboard / data panel — bar chart deco, top ticker bar, metric style"""
+    pixels = img.load()
+
+    draw_gradient_bg(pixels, w, h, bg_colors[0], bg_colors[1])
+    draw_noise_overlay(draw, w, h)
+
+    r, g, b = accent
+
+    # Sine wave deco
+    draw_sine_wave(draw, w, h, accent)
+
+    # Bar chart background deco
+    draw_bar_chart_deco(draw, w, h, accent, sentiment)
+
+    # Top ticker bar
+    draw.rectangle([0, 0, w, 52], fill=(*bg_colors[0], 230))
+    draw.line([(0, 52), (w, 52)], fill=(*accent, 180), width=1)
+
+    ticker_font = load_font("mono", 20)
+    ticker = f"  IDR WATCH  ·  {topic.upper()}  ·  LIVE UPDATE  ·  {'↑' if sentiment == 'bullish' else '↓' if sentiment == 'bearish' else '→'}  "
+    draw.text((10, 14), ticker, font=ticker_font, fill=(*accent, 220))
+
+    # Icon (left side, medium)
+    icon_font = load_font("bold", 90)
+    ib = draw.textbbox((0, 0), icon, font=icon_font)
+    draw.text((44, 80), icon, font=icon_font, fill=(*accent, 180))
+
+    left_margin = 50 + (ib[2] - ib[0]) + 24
+
+    # Metric label
+    label_font = load_font("regular", 22)
+    draw.text((left_margin, 80), topic.upper(), font=label_font, fill=(*accent, 180))
+    draw.rectangle([left_margin, 108, left_margin + 45, 111], fill=accent)
+
+    # Title
+    title_font = load_font("bold", 50)
+    lines = wrap_text(draw, title, title_font, w - left_margin - 50)
+    ty = 118
+    for line in lines:
+        draw_text_shadow(draw, (left_margin, ty), line, title_font, (235, 235, 235))
+        ty += 66
+
+    # Bottom info bar
+    draw.rectangle([0, h - 60, w, h], fill=(*bg_colors[0], 200))
+    draw.line([(0, h - 60), (w, h - 60)], fill=(*accent, 100), width=1)
+
+    sent_labels = {"bullish": "▲ Bullish", "bearish": "▼ Bearish", "neutral": "● Neutral"}
+    info_font = load_font("bold", 22)
+    draw.text((30, h - 43), sent_labels.get(sentiment, "● Neutral"), font=info_font, fill=accent)
+
+    wm_font = load_font("regular", 20)
+    wb = draw.textbbox((0, 0), watermark, font=wm_font)
+    draw.text((w - (wb[2] - wb[0]) - 24, h - 42), watermark, font=wm_font, fill=(*accent, 160))
+
+
+# ============================================================
+# MAIN IMAGE GENERATOR
+# ============================================================
+
+def generate_card_image(title, keyword="", watermark="@idrwatch"):
+    """
+    Generate stylish card image berdasarkan context.
+    No external API, no scraping. Pure local generation.
+    """
     try:
-        resp = requests.get(image_url, timeout=10, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
-        resp.raise_for_status()
-        
-        img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
-        img = img.resize((1200, 630), Image.LANCZOS)
-        
-        # Overlay gelap
-        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-        draw.rectangle(
-            [(0, img.height - 80), (img.width, img.height)],
-            fill=(0, 0, 0, 160)
-        )
-        img = Image.alpha_composite(img, overlay)
-        
-        # Watermark
-        draw = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
-        except:
-            font = ImageFont.load_default()
-        
-        bbox = draw.textbbox((0, 0), watermark_text, font=font)
-        text_w = bbox[2] - bbox[0]
-        x = img.width - text_w - 20
-        y = img.height - 55
-        draw.text((x, y), watermark_text, font=font, fill=(255, 255, 255, 255))
-        
+        W, H = 1200, 630
+        sentiment, topic, accent, bg_colors, icon = detect_context(title, keyword)
+        style = pick_style(topic, sentiment)
+
+        print(f"      ✎ Style: {style} | Topic: {topic} | Sentiment: {sentiment} | Icon: {icon}")
+
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 255))
+        draw = ImageDraw.Draw(img, "RGBA")
+
+        style_fn = {
+            "editorial":  style_editorial,
+            "terminal":   style_terminal,
+            "minimal":    style_minimal,
+            "bold_type":  style_bold_type,
+            "dashboard":  style_dashboard,
+        }[style]
+
+        style_fn(img, draw, W, H, title, topic, accent, bg_colors, icon, sentiment, watermark)
+
         img = img.convert("RGB")
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
+        img.save(buf, format="JPEG", quality=88)
         buf.seek(0)
-        print(f"      ✓ Watermark added")
+
+        print(f"      ✓ Card generated ({style})")
         return buf
+
     except Exception as e:
-        print(f"      ✗ Watermark error: {e}")
+        print(f"      ✗ Card generation error: {e}")
         return None
 
-# ============================================================
-# SMART IMAGE FETCHING WITH FALLBACK
-# ============================================================
-
-def fetch_article_image_smart(article_url, title, keyword):
-    """
-    Smart image fetching dengan fallback strategy:
-    1. Coba extract dari artikel (dengan validasi ketat)
-    2. Kalau gagal, scrape dari berita lokal Indonesia
-    3. Kalau masih gagal, create stylish placeholder
-    """
-    
-    print(f"    📸 Fetching image strategy:")
-    
-    # Strategy 1: Extract dari artikel
-    print(f"       → Trying article extraction...")
-    try:
-        resp = requests.get(article_url, timeout=10, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
-        resp.raise_for_status()
-        
-        match = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', resp.text)
-        if match:
-            img_url = match.group(1)
-            if is_valid_image_url(img_url):
-                try:
-                    img_resp = requests.get(img_url, timeout=10)
-                    if validate_image_before_use(io.BytesIO(img_resp.content)):
-                        image_buf = add_watermark(img_url)
-                        if image_buf:
-                            return image_buf
-                except:
-                    pass
-    except:
-        pass
-    
-    # Strategy 2: Scrape dari berita lokal Indonesia
-    print(f"       → Trying local Indonesia news scrape...")
-    scraped_image = scrape_local_news_image(keyword)
-    if scraped_image:
-        try:
-            image_buf = add_watermark(scraped_image)
-            if image_buf:
-                return image_buf
-        except:
-            pass
-    
-    # Strategy 3: Create stylish placeholder (paling reliable!)
-    print(f"       → Creating stylish placeholder...")
-    return create_stylish_placeholder(title, keyword)
 
 # ============================================================
 # HELPER FUNCTIONS
@@ -539,8 +648,7 @@ def save_posted(data):
         json.dump(data, f, indent=2)
 
 def clean_title(title):
-    title = re.sub(r'\s[-|]\s.*$', '', title).strip()
-    return title
+    return re.sub(r'\s[-|]\s.*$', '', title).strip()
 
 def extract_real_url_from_google_news(google_news_url):
     try:
@@ -571,9 +679,7 @@ def fetch_articles():
                 if title.lower() in seen_titles:
                     continue
                 seen_titles.add(title.lower())
-                
                 real_url = extract_real_url_from_google_news(entry.link)
-                
                 articles.append({
                     "title": title,
                     "url": real_url,
@@ -586,6 +692,30 @@ def fetch_articles():
 
 def is_blacklisted(title):
     return any(bl.lower() in title.lower() for bl in BLACKLIST)
+
+_gemini_key_index = 0
+
+def get_gemini_client():
+    global _gemini_key_index
+    return genai.Client(api_key=GEMINI_KEYS[_gemini_key_index % len(GEMINI_KEYS)])
+
+def gemini(prompt):
+    global _gemini_key_index
+    for _ in range(len(GEMINI_KEYS)):
+        try:
+            client = get_gemini_client()
+            response = client.models.generate_content(
+                model="gemini-2.5-flash-lite",
+                contents=prompt
+            )
+            return response.text.strip()
+        except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                print(f"      Key {_gemini_key_index + 1} rate limited...")
+                _gemini_key_index += 1
+                continue
+            raise e
+    return None
 
 def is_relevant(title, summary):
     prompt = f"""
@@ -660,6 +790,7 @@ def send_telegram(msg, image_buf=None):
             print(f"    ✗ Telegram error: {e}")
             return False
 
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -667,61 +798,61 @@ def send_telegram(msg, image_buf=None):
 def main():
     now = datetime.now(WIB)
     print(f"\n{'='*60}")
-    print(f"[{now.strftime('%d %b %Y %H:%M')} WIB] IDR Watch Bot (Smart Images)")
+    print(f"[{now.strftime('%d %b %Y %H:%M')} WIB] IDR Watch Bot")
     print(f"{'='*60}\n")
-    
+
     posted_data = load_posted()
     posted_urls = set(posted_data["posted"])
     articles = fetch_articles()
     print(f"📰 Found {len(articles)} articles\n")
-    
+
     count = 0
     for idx, article in enumerate(articles, 1):
         if count >= MAX_ARTICLES_PER_RUN:
             break
-        
+
         url = article["url"]
         title = article["title"]
         keyword = article["keyword"]
-        
+
         print(f"[{idx}] {title[:60]}...")
-        
+
         if url in posted_urls:
             print(f"    ⊘ Already posted\n")
             continue
-        
+
         if is_blacklisted(title):
             print(f"    ⊘ Blacklisted\n")
             continue
-        
+
         if not is_relevant(title, article["summary"]):
             print(f"    ⊘ Not relevant\n")
             continue
-        
+
         narasi = generate_narasi(title, article["summary"])
         if narasi is None:
             if ON_API_FAIL == "skip":
                 print(f"    ⊘ Gemini API failed\n")
                 continue
-        
+
         msg = f"🏦 <b>{title}</b>\n\n{narasi}{FOOTER}"
-        
-        # SMART IMAGE FETCHING
-        image_buf = fetch_article_image_smart(url, title, keyword)
+
+        image_buf = generate_card_image(title, keyword)
         send_telegram(msg, image_buf)
         print(f"    ✓ Posted!\n")
-        
+
         posted_urls.add(url)
         posted_data["posted"] = list(posted_urls)
         count += 1
-        
+
         if count < MAX_ARTICLES_PER_RUN:
             time.sleep(2)
-    
+
     save_posted(posted_data)
     print(f"{'='*60}")
     print(f"✓ Selesai. {count} artikel dipost.")
     print(f"{'='*60}\n")
+
 
 if __name__ == "__main__":
     main()
